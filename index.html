@@ -51,10 +51,10 @@
            ========================================== */
         .desk {
             perspective: 2000px;
-            width: 40vw; /* Scales beautifully up to 80vw when open 📐 */
+            /* 🪄 Automatically caps the OPEN book at exactly 80% of screen Width or Height! */
+            width: min(40vw, 56.5vh); 
             min-width: 280px;
-            max-width: 460px;
-            aspect-ratio: 1 / 1.35;
+            aspect-ratio: 1 / 1.414; /* 📐 Pure ISO A5 Paper Ratio (1 : √2) */
             position: relative;
         }
 
