@@ -1,0 +1,14 @@
+{
+    "name": "notebook",
+    "version": "1.0.0",
+    "description": "Minimal Interactive Notebook",
+    "main": "main.js",
+    "scripts": {
+        "start": "electron ."
+    },
+    "author": "",
+    "license": "MIT",
+    "devDependencies": {
+        "electron": "^28.0.0"
+    }
+}
