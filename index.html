@@ -201,20 +201,23 @@
         }
 
         /* ==========================================
-           📏 DYNAMIC RULING STYLES
+           📏 DYNAMIC RULING STYLES (True A5 Specs)
            ========================================== */
         .book[data-ruling="dots"] .content {
-            background-image: radial-gradient(circle, var(--dots) 1.4px, transparent 1.4px);
-            background-size: 24px 24px;
-            background-position: 2px 2px;
+            background-image: radial-gradient(circle, var(--dots) 1.5px, transparent 1.5px);
+            /* 27 dots horizontal = 26 columns | 39 dots vertical = 38 rows */
+            background-size: calc(100% / 26) calc(100% / 38);
+            background-position: 0 0;
         }
         .book[data-ruling="lines"] .content {
-            background-image: linear-gradient(transparent 23px, var(--dots) 23px);
-            background-size: 100% 24px;
+            background-image: linear-gradient(transparent calc(100% - 1px), var(--dots) 1px);
+            background-size: 100% calc(100% / 38);
+            background-position: 0 0;
         }
         .book[data-ruling="grid"] .content {
             background-image: linear-gradient(var(--dots) 1px, transparent 1px), linear-gradient(90deg, var(--dots) 1px, transparent 1px);
-            background-size: 24px 24px;
+            background-size: calc(100% / 26) calc(100% / 38);
+            background-position: 0 0;
         }
         .book[data-ruling="blank"] .content {
             background-image: none;
