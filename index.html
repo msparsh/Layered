@@ -201,27 +201,30 @@
         }
 
         /* ==========================================
-           📏 DYNAMIC RULING STYLES (True A5 Specs)
+           📏 DYNAMIC RULING (Mathematically Locked!)
            ========================================== */
+        .book {
+            --lines: 19; /* Exactly 19 lines per page */
+            --rows: calc(var(--lines) * 2); /* 38 background dots */
+            --cols: 26;
+        }
+
         .book[data-ruling="dots"] .content {
             background-image: radial-gradient(circle, var(--dots) 1.5px, transparent 1.5px);
-            /* 27 dots horizontal = 26 columns | 39 dots vertical = 38 rows */
-            background-size: calc(100% / 26) calc(100% / 38);
+            background-size: calc(100% / var(--cols)) calc(100% / var(--rows));
             background-position: 0 0;
         }
         .book[data-ruling="lines"] .content {
             background-image: linear-gradient(transparent calc(100% - 1px), var(--dots) 1px);
-            background-size: 100% calc(100% / 38);
+            background-size: 100% calc(100% / var(--rows));
             background-position: 0 0;
         }
         .book[data-ruling="grid"] .content {
             background-image: linear-gradient(var(--dots) 1px, transparent 1px), linear-gradient(90deg, var(--dots) 1px, transparent 1px);
-            background-size: calc(100% / 26) calc(100% / 38);
+            background-size: calc(100% / var(--cols)) calc(100% / var(--rows));
             background-position: 0 0;
         }
-        .book[data-ruling="blank"] .content {
-            background-image: none;
-        }
+        .book[data-ruling="blank"] .content { background-image: none; }
 
         /* ==========================================
            ⚙️ SETTINGS PAGE UI
@@ -266,20 +269,23 @@
            ========================================== */
         .flip-zone {
             position: absolute;
-            inset: 0; /* 🪄 Covers the entire page! */
-            width: 100%;
+            top: 0; 
+            bottom: 0;
+            width: 60px; /* 🪄 Only covers the page edges now! */
             z-index: 10;
             transform: translateZ(2px);
         }
         .flip-zone:active { cursor: grab; }
 
         .flip-zone.right {
-            right: 0;
+            right: 0; 
+            left: auto;
             background: transparent;
         }
 
         .flip-zone.left {
-            left: 0;
+            left: 0; 
+            right: auto;
             background: transparent;
         }
 
@@ -296,6 +302,77 @@
             font-family: system-ui, -apple-system, sans-serif;
             transition: opacity 0.6s;
         }
+
+        /* ==========================================
+           📝 BULLET JOURNAL BLOCKS
+           ========================================== */
+        .content {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden; /* Lock scrolling, pages are fixed! */
+        }
+
+        .bullet-block {
+            display: flex;
+            align-items: center;
+            height: calc(100% / var(--lines)); /* Forces exactly 19 lines! */
+            margin: 0; padding: 0;
+            position: relative;
+            transition: background 0.2s;
+        }
+
+        /* 🖐️ Drag Handle */
+        .drag-handle {
+            opacity: 0;
+            cursor: grab;
+            color: var(--ink-dim);
+            font-size: 1rem;
+            padding: 0 4px;
+            user-select: none;
+            transition: opacity 0.2s;
+            position: absolute;
+            left: -18px; /* Hangs inside the margin */
+        }
+        
+        .bullet-block:hover .drag-handle { opacity: 0.5; }
+        .drag-handle:hover { opacity: 1; color: var(--cover-accent); }
+        .bullet-block.is-dragging { opacity: 0.3; background: var(--paper-edge); }
+
+        .bullet-control {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            width: 20px;
+            min-width: 20px;
+            margin-right: 8px;
+            cursor: pointer;
+            user-select: none;
+            color: var(--ink-dim);
+            font-family: monospace;
+            font-size: clamp(0.9rem, 2cqw, 1.2rem); /* Scales with container! */
+        }
+
+        .bullet-control:hover { color: var(--cover-accent); }
+        .signifier { font-size: 0.8rem; margin-right: 2px; color: var(--cover-accent); }
+
+        .bullet-text {
+            flex: 1;
+            outline: none;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            font-size: clamp(0.85rem, 2.5cqw, 1.1rem); /* Dynamic Font Scaling! 🪄 */
+            word-wrap: break-word;
+            white-space: nowrap; /* Prevents text from breaking the grid height */
+            overflow: hidden;
+        }
+
+        .bullet-text[contenteditable]:empty::before { content: "\FEFF"; }
+
+        /* ✨ Visual States */
+        .bullet-block.status-completed .bullet-text { text-decoration: line-through; opacity: 0.5; }
+        .bullet-block.status-migrated .bullet-text, .bullet-block.status-scheduled .bullet-text { color: var(--ink-dim); font-style: italic; }
+        .bullet-block.type-blank .bullet-control { opacity: 0; pointer-events: none; } /* Hides symbol when blank! */
 
         /* ==========================================
            📱 MOBILE RESPONSIVENESS
@@ -362,24 +439,44 @@
                     const parsed = stored ? JSON.parse(stored) : null;
                     return this.validate(parsed) ? parsed : this.createEmpty();
                 } catch (e) {
-                    console.warn("Storage read failed ⚠️", e);
                     return this.createEmpty();
                 }
             }
 
             static save(data) {
                 try { localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(data)); } 
-                catch (e) { console.warn("Storage full or unavailable ⚠️", e); }
+                catch (e) { console.warn("Storage full ⚠️"); }
             }
 
             static createEmpty() {
-                return Array.from({ length: CONFIG.TOTAL_PAGES }, () => ({ f: [], b: [] }));
+                const LINES_PER_PAGE = 19;
+                return Array.from({ length: CONFIG.TOTAL_PAGES }, () => ({ 
+                    f: Array.from({ length: LINES_PER_PAGE }, () => this.createNewBullet()), 
+                    b: Array.from({ length: LINES_PER_PAGE }, () => this.createNewBullet()) 
+                }));
             }
 
-            static validate(data) {
-                return Array.isArray(data) && data.length === CONFIG.TOTAL_PAGES;
+            // 🏗️ Your strict Bullet schema!
+            static createNewBullet(content = "") {
+                return {
+                    id: crypto.randomUUID(),
+                    type: "task",
+                    content: content,
+                    notes: null,
+                    status: "open",
+                    signifiers: [],
+                    contexts: [],
+                    parentId: null,
+                    collectionId: null, 
+                    migratedFromId: null,
+                    createdAt: new Date().toISOString(),
+                    dueDate: null,
+                    completedAt: null,
+                    estimatedMinutes: null
+                };
             }
 
+            static validate(data) { return Array.isArray(data) && data.length === CONFIG.TOTAL_PAGES; }
             static loadSettings() {
                 try {
                     const s = localStorage.getItem(CONFIG.SETTINGS_KEY);
@@ -412,9 +509,38 @@
                 return rawNum - 2; 
             }
 
-            renderLines(lines) {
-                if (!lines || !lines.length) return '';
-                return lines.map(l => `<div>${Utils.escapeHTML(l) || '<br>'}</div>`).join('');
+            renderBullets(bullets) {
+                if (!bullets || !bullets.length) return '';
+                
+                return bullets.map(bullet => {
+                    let symbol = "•"; 
+                    if (bullet.type === "task") {
+                        if (bullet.status === "open") symbol = "•";
+                        if (bullet.status === "completed") symbol = "✕";
+                        if (bullet.status === "migrated") symbol = ">";
+                        if (bullet.status === "scheduled") symbol = "<";
+                    } else if (bullet.type === "event") {
+                        symbol = "○";
+                    } else if (bullet.type === "note") {
+                        symbol = "-";
+                    }
+
+                    const signifierStr = bullet.signifiers.join("");
+                    
+                    // Determine if the line is completely blank (no symbol)
+                    const isBlank = bullet.type === "blank";
+                    const blockClass = isBlank ? "type-blank" : `status-${bullet.status}`;
+
+                    return `
+                        <div class="bullet-block ${blockClass}" data-id="${bullet.id}" draggable="true">
+                            <div class="drag-handle">⋮⋮</div>
+                            <div class="bullet-control">
+                                <span class="signifier">${signifierStr}</span>
+                                <span class="symbol">${symbol}</span>
+                            </div>
+                            <div class="bullet-text" contenteditable="true" spellcheck="false">${Utils.escapeHTML(bullet.content)}</div>
+                        </div>`;
+                }).join('');
             }
 
             build(pagesData, settings) {
@@ -443,11 +569,11 @@
                                 </div>
                             </div>`;
                     } else {
-                        faceFrontContent = `<div class="content">${this.renderLines(data.f)}</div>${numFront ? `<span class="page-num">${numFront}</span>` : ''}`;
+                        faceFrontContent = `<div class="content">${this.renderBullets(data.f)}</div>${numFront ? `<span class="page-num">${numFront}</span>` : ''}`;
                     }
                     
                     let faceBackContent = isBackCover ? '' :
-                        `<div class="content">${this.renderLines(data.b)}</div>${numBack ? `<span class="page-num">${numBack}</span>` : ''}`;
+                        `<div class="content">${this.renderBullets(data.b)}</div>${numBack ? `<span class="page-num">${numBack}</span>` : ''}`;
 
                     const coverClass = isCover ? ' cover' : (isBackCover ? ' cover back-cover' : '');
                     
@@ -537,6 +663,180 @@
                         this.renderer.bookEl.querySelectorAll('.setting-btn').forEach(b => b.classList.remove('active'));
                         btn.classList.add('active');
                     }
+                });
+
+                // ==========================================
+                // 📝 BULLET EDITOR INTERACTIONS
+                // ==========================================
+
+                // 🖱️ Click to cycle bullet status!
+                book.addEventListener('pointerdown', e => {
+                    const control = e.target.closest('.bullet-control');
+                    if (!control) return;
+                    
+                    e.stopPropagation(); // 🛡️ Prevent dragging the page when clicking the bullet!
+
+                    const block = control.closest('.bullet-block');
+                    const bulletId = block.dataset.id;
+                    
+                    // Deep search for the bullet
+                    let targetBullet = null;
+                    this.data.forEach(page => {
+                        targetBullet = targetBullet || page.f.find(b => b.id === bulletId) || page.b.find(b => b.id === bulletId);
+                    });
+
+                    if (targetBullet && targetBullet.type === "task") {
+                        const statuses = ["open", "completed", "migrated", "scheduled"];
+                        let nextIdx = (statuses.indexOf(targetBullet.status) + 1) % statuses.length;
+                        targetBullet.status = statuses[nextIdx];
+                        
+                        // Instantly update DOM symbol ⚡
+                        const symbols = { "open": "•", "completed": "✕", "migrated": ">", "scheduled": "<" };
+                        control.querySelector('.symbol').textContent = symbols[targetBullet.status];
+                        
+                        // 🪄 NEW: Instantly update the wrapper class to trigger the Strikethrough CSS!
+                        block.className = `bullet-block status-${targetBullet.status}`;
+                        
+                        this.saveData();
+                    }
+                });
+
+                // ✍️ Input handling: Markdown-style shortcuts!
+                book.addEventListener('input', e => {
+                    if (!e.target.classList.contains('bullet-text')) return;
+                    
+                    const block = e.target.closest('.bullet-block');
+                    const bulletId = block.dataset.id;
+                    let text = e.target.textContent;
+
+                    // Deep search to find our bullet reference
+                    let targetBullet = null;
+                    this.data.forEach(page => {
+                        targetBullet = targetBullet || page.f.find(b => b.id === bulletId) || page.b.find(b => b.id === bulletId);
+                    });
+
+                    if (targetBullet) {
+                        // 🪄 Shortcut parsing: check if first two chars match our codes!
+                        const shortcutMatch = text.match(/^([\*x><o\-\.])\s/i);
+                        
+                        if (shortcutMatch) {
+                            const char = shortcutMatch[1].toLowerCase();
+                            
+                            if (char === '*') { targetBullet.signifiers = ['*']; }
+                            else if (char === 'x') { targetBullet.type = 'task'; targetBullet.status = 'completed'; }
+                            else if (char === '>') { targetBullet.type = 'task'; targetBullet.status = 'migrated'; }
+                            else if (char === '<') { targetBullet.type = 'task'; targetBullet.status = 'scheduled'; }
+                            else if (char === 'o') { targetBullet.type = 'event'; targetBullet.status = 'open'; }
+                            else if (char === '-') { targetBullet.type = 'note'; targetBullet.status = 'open'; }
+                            else if (char === '.') { targetBullet.type = 'task'; targetBullet.status = 'open'; }
+
+                            // Clean the text and update DOM visually!
+                            e.target.textContent = text.substring(2);
+                            targetBullet.content = e.target.textContent;
+                            
+                            // Instantly re-render just this block to show the new symbol!
+                            const newHTML = this.renderer.renderBullets([targetBullet]);
+                            block.outerHTML = newHTML;
+                            
+                            // Restore focus to the end of the line
+                            const newBlock = document.querySelector(`[data-id="${bulletId}"] .bullet-text`);
+                            newBlock.focus();
+                            
+                        } else {
+                            targetBullet.content = text;
+                            if (text !== "" && targetBullet.type === "blank") {
+                                targetBullet.type = "task"; // Auto-restore to bullet if they type!
+                                block.classList.remove('type-blank');
+                            }
+                        }
+                        this.saveData();
+                    }
+                });
+
+                // ⌨️ Advanced Keyboard Navigation (Enter to flip, Backspace to clear)
+                book.addEventListener('keydown', e => {
+                    if (!e.target.classList.contains('bullet-text')) return;
+                    const block = e.target.closest('.bullet-block');
+                    const bulletId = block.dataset.id;
+
+                    // 🔙 Backspace at position 0 clears the bullet symbol!
+                    if (e.key === 'Backspace' && window.getSelection().anchorOffset === 0) {
+                        let targetBullet = null;
+                        this.data.forEach(p => { targetBullet = targetBullet || p.f.find(b => b.id === bulletId) || p.b.find(b => b.id === bulletId); });
+                        
+                        if (targetBullet && targetBullet.type !== 'blank') {
+                            e.preventDefault(); // Stop from deleting actual text
+                            targetBullet.type = 'blank';
+                            targetBullet.status = 'open';
+                            block.className = 'bullet-block type-blank';
+                            this.saveData();
+                        } else if (targetBullet && targetBullet.type === 'blank') {
+                            // Focus previous line if already blank!
+                            e.preventDefault();
+                            const prev = block.previousElementSibling;
+                            if (prev) prev.querySelector('.bullet-text').focus();
+                        }
+                    }
+
+                    // ⬇️ Enter moves to next line OR flips page!
+                    if (e.key === 'Enter') {
+                        e.preventDefault(); 
+                        const nextBlock = block.nextElementSibling;
+                        if (nextBlock && nextBlock.classList.contains('bullet-block')) {
+                            nextBlock.querySelector('.bullet-text').focus();
+                        } else {
+                            // Last line hit! Flip the page! 📖
+                            this.flipNext();
+                            // Optional: Add a tiny timeout here to focus the top of the next page after flip animation!
+                        }
+                    }
+                });
+
+                // 🖐️ DRAG AND DROP REORDERING
+                let draggedBlock = null;
+
+                book.addEventListener('dragstart', e => {
+                    if (!e.target.classList.contains('bullet-block')) return;
+                    draggedBlock = e.target;
+                    setTimeout(() => draggedBlock.classList.add('is-dragging'), 0);
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+
+                book.addEventListener('dragover', e => {
+                    e.preventDefault(); // Required to allow dropping!
+                    const targetBlock = e.target.closest('.bullet-block');
+                    if (targetBlock && targetBlock !== draggedBlock && targetBlock.parentElement === draggedBlock.parentElement) {
+                        const contentDiv = targetBlock.parentElement;
+                        const blocks = [...contentDiv.querySelectorAll('.bullet-block')];
+                        const draggedIndex = blocks.indexOf(draggedBlock);
+                        const targetIndex = blocks.indexOf(targetBlock);
+                        
+                        if (draggedIndex < targetIndex) {
+                            targetBlock.after(draggedBlock);
+                        } else {
+                            targetBlock.before(draggedBlock);
+                        }
+                    }
+                });
+
+                book.addEventListener('dragend', e => {
+                    if (!draggedBlock) return;
+                    draggedBlock.classList.remove('is-dragging');
+                    
+                    // 💾 Save the new order to storage!
+                    const contentDiv = draggedBlock.parentElement;
+                    const pageEl = contentDiv.closest('.page');
+                    const isFront = contentDiv.parentElement.classList.contains('front');
+                    const pageIdx = parseInt(pageEl.dataset.idx);
+                    
+                    const newIds = [...contentDiv.querySelectorAll('.bullet-block')].map(b => b.dataset.id);
+                    const arrayToUpdate = isFront ? this.data[pageIdx].f : this.data[pageIdx].b;
+                    
+                    // Sort the underlying data array to match the new DOM order!
+                    arrayToUpdate.sort((a, b) => newIds.indexOf(a.id) - newIds.indexOf(b.id));
+                    this.saveData();
+                    
+                    draggedBlock = null;
                 });
             }
 
