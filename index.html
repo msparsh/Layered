@@ -204,8 +204,8 @@
            📏 DYNAMIC RULING (Mathematically Locked!)
            ========================================== */
         .book {
-            --lines: 19; /* Exactly 19 lines per page */
-            --rows: calc(var(--lines) * 2); /* 38 background dots */
+            --lines: 38; /* Exactly 38 lines per page */
+            --rows: 38; /* Locked to 38 so the visual grid remains exactly the same! */
             --cols: 26;
         }
 
@@ -216,7 +216,7 @@
         }
         .book[data-ruling="lines"] .content {
             background-image: linear-gradient(transparent calc(100% - 1px), var(--dots) 1px);
-            background-size: 100% calc(100% / var(--rows));
+            background-size: 100% calc(100% / var(--lines));
             background-position: 0 0;
         }
         .book[data-ruling="grid"] .content {
@@ -315,7 +315,7 @@
         .bullet-block {
             display: flex;
             align-items: center;
-            height: calc(100% / var(--lines)); /* Forces exactly 19 lines! */
+            height: calc(100% / var(--lines)); /* Forces exactly 38 lines! */
             margin: 0; padding: 0;
             position: relative;
             transition: background 0.2s;
@@ -361,6 +361,7 @@
             height: 100%;
             display: flex;
             align-items: center;
+            cursor: text;
             font-size: clamp(0.85rem, 2.5cqw, 1.1rem); /* Dynamic Font Scaling! 🪄 */
             word-wrap: break-word;
             white-space: nowrap; /* Prevents text from breaking the grid height */
@@ -449,7 +450,7 @@
             }
 
             static createEmpty() {
-                const LINES_PER_PAGE = 19;
+                const LINES_PER_PAGE = 38;
                 return Array.from({ length: CONFIG.TOTAL_PAGES }, () => ({ 
                     f: Array.from({ length: LINES_PER_PAGE }, () => this.createNewBullet()), 
                     b: Array.from({ length: LINES_PER_PAGE }, () => this.createNewBullet()) 
@@ -460,7 +461,7 @@
             static createNewBullet(content = "") {
                 return {
                     id: crypto.randomUUID(),
-                    type: "task",
+                    type: "blank",
                     content: content,
                     notes: null,
                     status: "open",
@@ -672,7 +673,15 @@
                 // 🖱️ Click to cycle bullet status!
                 book.addEventListener('pointerdown', e => {
                     const control = e.target.closest('.bullet-control');
-                    if (!control) return;
+                    if (!control) {
+                        // Make entire line clickable to focus text
+                        const block = e.target.closest('.bullet-block');
+                        if (block && e.target === block) {
+                            const textNode = block.querySelector('.bullet-text');
+                            if (textNode) textNode.focus();
+                        }
+                        return;
+                    }
                     
                     e.stopPropagation(); // 🛡️ Prevent dragging the page when clicking the bullet!
 
@@ -784,10 +793,6 @@
                         const nextBlock = block.nextElementSibling;
                         if (nextBlock && nextBlock.classList.contains('bullet-block')) {
                             nextBlock.querySelector('.bullet-text').focus();
-                        } else {
-                            // Last line hit! Flip the page! 📖
-                            this.flipNext();
-                            // Optional: Add a tiny timeout here to focus the top of the next page after flip animation!
                         }
                     }
                 });
