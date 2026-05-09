@@ -51,10 +51,9 @@
            ========================================== */
         .desk {
             perspective: 2000px;
-            /* 🪄 Automatically caps the OPEN book at exactly 80% of screen Width or Height! */
             width: min(40vw, 56.5vh); 
             min-width: 280px;
-            aspect-ratio: 1 / 1.414; /* 📐 Pure ISO A5 Paper Ratio (1 : √2) */
+            aspect-ratio: 1 / 1.414; 
             position: relative;
         }
 
@@ -84,7 +83,7 @@
         }
 
         .page.flipped { transform: rotateY(-180deg); }
-        .page.active { z-index: 999 !important; } /* Ensures grabbed page stays on top 🥇 */
+        .page.active { z-index: 999 !important; }
 
         /* ==========================================
            🎭 PAGE FACES (FRONT & BACK)
@@ -101,7 +100,6 @@
             overflow: hidden;
         }
 
-        /* Paper Texture Overlay 📜 */
         .face::before {
             content: "";
             position: absolute;
@@ -118,7 +116,6 @@
             box-shadow: inset -3px 0 8px rgba(0,0,0,0.03), -1px 2px 6px var(--page-shadow), -2px 0 0 var(--paper-edge);
         }
 
-        /* Curl Shadows when dragging 🌒 */
         .page.active .face.front { box-shadow: inset 3px 0 8px rgba(0,0,0,0.03), 4px 6px 18px var(--curl-shadow), 2px 0 0 var(--paper-edge); }
         .page.active .face.back { box-shadow: inset -3px 0 8px rgba(0,0,0,0.03), -4px 6px 18px var(--curl-shadow), -2px 0 0 var(--paper-edge); }
 
@@ -150,7 +147,6 @@
             align-items: center;
         }
 
-        /* Cover Title Styling ✨ */
         .cover-title {
             text-align: center;
             font-size: 2.3rem;
@@ -161,6 +157,7 @@
             z-index: 2;
             text-shadow: 0 1px 2px rgba(0,0,0,0.3);
         }
+        
         .cover-title::after {
             content: "";
             display: block;
@@ -171,7 +168,6 @@
             opacity: 0.7;
         }
 
-        /* Bookmark Ribbon 🎗️ */
         .cover .face.front::after {
             content: "";
             position: absolute;
@@ -198,14 +194,17 @@
             word-wrap: break-word;
             font-family: 'Georgia', 'Times New Roman', serif;
             cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden; 
         }
 
         /* ==========================================
-           📏 DYNAMIC RULING (Mathematically Locked!)
+           📏 DYNAMIC RULING
            ========================================== */
         .book {
-            --lines: 38; /* Exactly 38 lines per page */
-            --rows: 38; /* Locked to 38 so the visual grid remains exactly the same! */
+            --lines: 38; 
+            --rows: 38; 
             --cols: 26;
         }
 
@@ -231,9 +230,10 @@
            ========================================== */
         .settings-page {
             padding: 40px;
-            z-index: 20; /* 🛡️ Keeps buttons clickable above the flip zone! */
+            z-index: 20; 
             position: relative;
         }
+        
         .settings-page h2 { color: var(--ink); margin-bottom: 24px; font-weight: normal; font-size: 1.8rem; }
         .setting-group { margin-bottom: 20px; font-family: system-ui, sans-serif; }
         .setting-group label { display: block; margin-bottom: 10px; font-size: 0.75rem; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 1.5px; }
@@ -242,6 +242,7 @@
             border-radius: 6px; cursor: pointer; color: var(--ink); margin: 0 6px 6px 0;
             font-size: 0.9rem; transition: all 0.2s;
         }
+        
         .setting-btn:hover { border-color: var(--cover-accent); }
         .setting-btn.active { background: var(--cover-accent); color: #fff; border-color: var(--cover-accent); }
 
@@ -271,23 +272,13 @@
             position: absolute;
             top: 0; 
             bottom: 0;
-            width: 60px; /* 🪄 Only covers the page edges now! */
+            width: 60px; 
             z-index: 10;
             transform: translateZ(2px);
         }
         .flip-zone:active { cursor: grab; }
-
-        .flip-zone.right {
-            right: 0; 
-            left: auto;
-            background: transparent;
-        }
-
-        .flip-zone.left {
-            left: 0; 
-            right: auto;
-            background: transparent;
-        }
+        .flip-zone.right { right: 0; left: auto; background: transparent; }
+        .flip-zone.left { left: 0; right: auto; background: transparent; }
 
         .hint {
             position: fixed;
@@ -306,22 +297,15 @@
         /* ==========================================
            📝 BULLET JOURNAL BLOCKS
            ========================================== */
-        .content {
-            display: flex;
-            flex-direction: column;
-            overflow: hidden; /* Lock scrolling, pages are fixed! */
-        }
-
         .bullet-block {
             display: flex;
             align-items: center;
-            height: calc(100% / var(--lines)); /* Forces exactly 38 lines! */
+            height: calc(100% / var(--lines)); 
             margin: 0; padding: 0;
             position: relative;
             transition: background 0.2s;
         }
 
-        /* 🖐️ Drag Handle */
         .drag-handle {
             opacity: 0;
             cursor: grab;
@@ -331,7 +315,7 @@
             user-select: none;
             transition: opacity 0.2s;
             position: absolute;
-            left: -18px; /* Hangs inside the margin */
+            left: -18px; 
         }
         
         .bullet-block:hover .drag-handle { opacity: 0.5; }
@@ -349,7 +333,7 @@
             user-select: none;
             color: var(--ink-dim);
             font-family: monospace;
-            font-size: clamp(0.9rem, 2cqw, 1.2rem); /* Scales with container! */
+            font-size: clamp(0.9rem, 2cqw, 1.2rem); 
         }
 
         .bullet-control:hover { color: var(--cover-accent); }
@@ -362,18 +346,17 @@
             display: flex;
             align-items: center;
             cursor: text;
-            font-size: clamp(0.85rem, 2.5cqw, 1.1rem); /* Dynamic Font Scaling! 🪄 */
+            font-size: clamp(0.85rem, 2.5cqw, 1.1rem); 
             word-wrap: break-word;
-            white-space: nowrap; /* Prevents text from breaking the grid height */
+            white-space: nowrap; 
             overflow: hidden;
         }
 
         .bullet-text[contenteditable]:empty::before { content: "\FEFF"; }
 
-        /* ✨ Visual States */
         .bullet-block.status-completed .bullet-text { text-decoration: line-through; opacity: 0.5; }
         .bullet-block.status-migrated .bullet-text, .bullet-block.status-scheduled .bullet-text { color: var(--ink-dim); font-style: italic; }
-        .bullet-block.type-blank .bullet-control { opacity: 0; pointer-events: none; } /* Hides symbol when blank! */
+        .bullet-block.type-blank .bullet-control { opacity: 0; pointer-events: none; } 
 
         /* ==========================================
            📱 MOBILE RESPONSIVENESS
@@ -398,28 +381,38 @@
     <script>
         /**
          * 🏗️ 1. CORE CONFIGURATION
-         * Easily extendible settings for your journal! ⚙️
          */
         const CONFIG = {
-            TOTAL_PAGES: 6,           // Add more pages here! 📚
-            FLIP_THRESHOLD: 42,       // Pixels dragged to trigger a flip
+            TOTAL_PAGES: 6,
+            FLIP_THRESHOLD: 42,
             STORAGE_KEY: 'journal_data',
-            SETTINGS_KEY: 'journal_settings', // 💾 Separate save key for user preferences
-            DRAG_SENSITIVITY: 200,    // How fast the page follows the cursor
-            ANIMATION_SPEED: 550      // Matches CSS transition time (ms)
+            SETTINGS_KEY: 'journal_settings',
+            DRAG_SENSITIVITY: 200,
+            ANIMATION_SPEED: 550,
+            LINES_PER_PAGE: 38
+        };
+
+        const BULLET_SYMBOLS = { "open": "•", "completed": "✕", "migrated": ">", "scheduled": "<" };
+        const TASK_STATUSES = ["open", "completed", "migrated", "scheduled"];
+        const SHORTCUT_MAP = {
+            '*': { signifiers: ['*'] },
+            'x': { type: 'task', status: 'completed' },
+            '>': { type: 'task', status: 'migrated' },
+            '<': { type: 'task', status: 'scheduled' },
+            'o': { type: 'event', status: 'open' },
+            '-': { type: 'note', status: 'open' },
+            '.': { type: 'task', status: 'open' }
         };
 
         /**
          * 🛠️ 2. UTILITY TOOLKIT
-         * Helpers for debouncing and sanitization 🧽
          */
         const Utils = {
             debounce: (func, wait) => {
                 let timeout;
-                return function executedFunction(...args) {
-                    const later = () => { clearTimeout(timeout); func(...args); };
+                return function (...args) {
                     clearTimeout(timeout);
-                    timeout = setTimeout(later, wait);
+                    timeout = setTimeout(() => func(...args), wait);
                 };
             },
             escapeHTML: (str) => {
@@ -430,8 +423,7 @@
         };
 
         /**
-         * 💾 3. STORAGE MANAGER (Model)
-         * Safely loads and saves your precious notes 📝
+         * 💾 3. STORAGE MANAGER
          */
         class StorageManager {
             static load() {
@@ -450,14 +442,12 @@
             }
 
             static createEmpty() {
-                const LINES_PER_PAGE = 38;
                 return Array.from({ length: CONFIG.TOTAL_PAGES }, () => ({ 
-                    f: Array.from({ length: LINES_PER_PAGE }, () => this.createNewBullet()), 
-                    b: Array.from({ length: LINES_PER_PAGE }, () => this.createNewBullet()) 
+                    f: Array.from({ length: CONFIG.LINES_PER_PAGE }, () => this.createNewBullet()), 
+                    b: Array.from({ length: CONFIG.LINES_PER_PAGE }, () => this.createNewBullet()) 
                 }));
             }
 
-            // 🏗️ Your strict Bullet schema!
             static createNewBullet(content = "") {
                 return {
                     id: crypto.randomUUID(),
@@ -478,20 +468,21 @@
             }
 
             static validate(data) { return Array.isArray(data) && data.length === CONFIG.TOTAL_PAGES; }
+            
             static loadSettings() {
                 try {
                     const s = localStorage.getItem(CONFIG.SETTINGS_KEY);
                     return s ? { ruling: 'dots', ...JSON.parse(s) } : { ruling: 'dots' };
                 } catch (e) { return { ruling: 'dots' }; }
             }
+
             static saveSettings(settings) {
                 try { localStorage.setItem(CONFIG.SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
             }
         }
 
         /**
-         * 🎨 4. UI RENDERER (View)
-         * Generates the HTML and manages the 3D classes 🪄
+         * 🎨 4. UI RENDERER
          */
         class JournalRenderer {
             constructor(containerId, hintId) {
@@ -501,39 +492,26 @@
             }
 
             getPageNum(idx, isFront) {
-                if (idx === 0) return null;
-                if (idx === 1 && isFront) return null; // 🪄 Hide page number on the Settings face
-                if (idx === CONFIG.TOTAL_PAGES - 1 && !isFront) return null;
-                
-                // Shift numbering so the back of page 1 is "Page 1"
-                let rawNum = isFront ? idx * 2 : idx * 2 + 1;
-                return rawNum - 2; 
+                if (idx === 0 || (idx === 1 && isFront) || (idx === CONFIG.TOTAL_PAGES - 1 && !isFront)) return null;
+                return (isFront ? idx * 2 : idx * 2 + 1) - 2; 
             }
 
-            renderBullets(bullets) {
+            renderBullets(bullets, pageIdx, faceType) {
                 if (!bullets || !bullets.length) return '';
                 
                 return bullets.map(bullet => {
                     let symbol = "•"; 
-                    if (bullet.type === "task") {
-                        if (bullet.status === "open") symbol = "•";
-                        if (bullet.status === "completed") symbol = "✕";
-                        if (bullet.status === "migrated") symbol = ">";
-                        if (bullet.status === "scheduled") symbol = "<";
-                    } else if (bullet.type === "event") {
-                        symbol = "○";
-                    } else if (bullet.type === "note") {
-                        symbol = "-";
-                    }
+                    if (bullet.type === "task") symbol = BULLET_SYMBOLS[bullet.status] || "•";
+                    else if (bullet.type === "event") symbol = "○";
+                    else if (bullet.type === "note") symbol = "-";
 
                     const signifierStr = bullet.signifiers.join("");
-                    
-                    // Determine if the line is completely blank (no symbol)
                     const isBlank = bullet.type === "blank";
                     const blockClass = isBlank ? "type-blank" : `status-${bullet.status}`;
 
+                    // Injecting page and face coordinates directly for O(1) lookups
                     return `
-                        <div class="bullet-block ${blockClass}" data-id="${bullet.id}" draggable="true">
+                        <div class="bullet-block ${blockClass}" data-id="${bullet.id}" data-page="${pageIdx}" data-face="${faceType}" draggable="true">
                             <div class="drag-handle">⋮⋮</div>
                             <div class="bullet-control">
                                 <span class="signifier">${signifierStr}</span>
@@ -544,13 +522,18 @@
                 }).join('');
             }
 
+            updateSingleBulletDOM(block, bullet) {
+                const newHTML = this.renderBullets([bullet], block.dataset.page, block.dataset.face);
+                block.outerHTML = newHTML;
+            }
+
             build(pagesData, settings) {
-                this.bookEl.dataset.ruling = settings.ruling; // Apply ruling globally 📐
+                this.bookEl.dataset.ruling = settings.ruling;
 
                 const html = pagesData.map((data, i) => {
                     const isCover = i === 0;
                     const isBackCover = i === CONFIG.TOTAL_PAGES - 1;
-                    const isSettings = i === 1 && true; // Page 1, Front Face
+                    const isSettings = i === 1;
                     const numFront = this.getPageNum(i, true);
                     const numBack = this.getPageNum(i, false);
 
@@ -563,18 +546,19 @@
                                 <h2>Notebook Settings</h2>
                                 <div class="setting-group">
                                     <label>Ruling Style</label>
-                                    <button class="setting-btn ${settings.ruling === 'dots' ? 'active' : ''}" data-ruling="dots">Dots</button>
-                                    <button class="setting-btn ${settings.ruling === 'lines' ? 'active' : ''}" data-ruling="lines">Lines</button>
-                                    <button class="setting-btn ${settings.ruling === 'grid' ? 'active' : ''}" data-ruling="grid">Grid</button>
-                                    <button class="setting-btn ${settings.ruling === 'blank' ? 'active' : ''}" data-ruling="blank">Blank</button>
+                                    ${['dots', 'lines', 'grid', 'blank'].map(type => 
+                                        `<button class="setting-btn ${settings.ruling === type ? 'active' : ''}" data-ruling="${type}">
+                                            ${type.charAt(0).toUpperCase() + type.slice(1)}
+                                        </button>`
+                                    ).join('')}
                                 </div>
                             </div>`;
                     } else {
-                        faceFrontContent = `<div class="content">${this.renderBullets(data.f)}</div>${numFront ? `<span class="page-num">${numFront}</span>` : ''}`;
+                        faceFrontContent = `<div class="content">${this.renderBullets(data.f, i, 'f')}</div>${numFront ? `<span class="page-num">${numFront}</span>` : ''}`;
                     }
                     
                     let faceBackContent = isBackCover ? '' :
-                        `<div class="content">${this.renderBullets(data.b)}</div>${numBack ? `<span class="page-num">${numBack}</span>` : ''}`;
+                        `<div class="content">${this.renderBullets(data.b, i, 'b')}</div>${numBack ? `<span class="page-num">${numBack}</span>` : ''}`;
 
                     const coverClass = isCover ? ' cover' : (isBackCover ? ' cover back-cover' : '');
                     
@@ -595,21 +579,18 @@
                 this.pages.forEach((p, i) => {
                     const isFlipped = p.classList.contains('flipped');
                     if (isFlipped) flippedCount++;
-                    // Only update z-index if page isn't currently being dragged
                     if (!p.classList.contains('active')) {
                         p.style.zIndex = isFlipped ? i + 1 : CONFIG.TOTAL_PAGES - i;
                     }
                 });
 
-                // Move entire book to keep it centered on screen ⚖️
                 this.bookEl.className = `book ${flippedCount > 0 && flippedCount < CONFIG.TOTAL_PAGES ? 'is-open' : ''} ${flippedCount === CONFIG.TOTAL_PAGES ? 'is-closed-back' : ''}`;
                 this.hintEl.style.opacity = (flippedCount > 0 && flippedCount < CONFIG.TOTAL_PAGES) ? '0.35' : '0.7';
             }
         }
 
         /**
-         * 🕹️ 5. INTERACTION CONTROLLER (Controller)
-         * Orchestrates events, inputs, and dragging physics 🚀
+         * 🕹️ 5. INTERACTION CONTROLLER
          */
         class JournalController {
             constructor(renderer) {
@@ -617,17 +598,15 @@
                 this.data = StorageManager.load();
                 this.settings = StorageManager.loadSettings();
                 
-                // State Management
                 this.state = {
                     activePage: null,
                     startX: 0,
                     startAngle: 0,
-                    animationTimers: new Map() // Tracks timeouts to prevent rapid-click bugs! 🐛🔨
+                    animationTimers: new WeakMap(), // Prevents memory leaks by auto-clearing detached DOM nodes
+                    draggedBlock: null
                 };
 
-                // Debounced save so we don't fry the CPU while typing 💻
                 this.saveData = Utils.debounce(() => StorageManager.save(this.data), 500);
-
                 this.init();
             }
 
@@ -638,214 +617,180 @@
                 console.log('%c📖 Journal Engine v2.0 Ready! ✨', 'font-size:1.2em; color:#b8935a;');
             }
 
+            // O(1) Helper to fetch data array reference directly from DOM attributes
+            getBulletFromBlock(block) {
+                if (!block) return null;
+                const page = block.dataset.page;
+                const face = block.dataset.face;
+                return this.data[page][face].find(b => b.id === block.dataset.id);
+            }
+
             bindEvents() {
                 const book = this.renderer.bookEl;
 
-                // Pointer / Drag Events 👆
+                // Document level drag/keyboard
                 document.addEventListener('pointerdown', this.handlePointerDown.bind(this));
                 document.addEventListener('pointermove', this.handlePointerMove.bind(this));
                 document.addEventListener('pointerup', this.handlePointerUp.bind(this));
                 document.addEventListener('pointercancel', this.handlePointerCancel.bind(this));
-                
-                // Keyboard Navigation ⌨️
                 document.addEventListener('keydown', this.handleKeyboard.bind(this));
+
+                // Book Delegate Listeners
+                book.addEventListener('pointerdown', this.handleBookPointerDown.bind(this));
+                book.addEventListener('input', this.handleBulletInput.bind(this));
+                book.addEventListener('keydown', this.handleBulletKeydown.bind(this));
+
+                // Drag & Drop
+                this.bindDragDropEvents(book);
+            }
+
+            // --- DELEGATED EVENT HANDLERS ---
+
+            handleBookPointerDown(e) {
+                const btn = e.target.closest('.setting-btn');
+                if (btn) return this.handleSettingsClick(e, btn);
+
+                const control = e.target.closest('.bullet-control');
+                if (control) return this.handleBulletControlClick(e, control);
+
+                const block = e.target.closest('.bullet-block');
+                if (block && e.target === block) {
+                    const textNode = block.querySelector('.bullet-text');
+                    if (textNode) textNode.focus();
+                }
+            }
+
+            handleSettingsClick(e, btn) {
+                e.stopPropagation();
+                const ruling = btn.dataset.ruling;
+                this.settings.ruling = ruling;
+                StorageManager.saveSettings(this.settings);
+                this.renderer.bookEl.dataset.ruling = ruling;
                 
-                // Settings Click Intercept ⚙️
-                book.addEventListener('pointerdown', e => {
-                    const btn = e.target.closest('.setting-btn');
-                    if (btn) {
-                        e.stopPropagation(); // 🛡️ Prevent the flip-zone from catching this click!
-                        const ruling = btn.dataset.ruling;
-                        this.settings.ruling = ruling;
-                        StorageManager.saveSettings(this.settings);
-                        this.renderer.bookEl.dataset.ruling = ruling;
-                        
-                        // Update active visual state
-                        this.renderer.bookEl.querySelectorAll('.setting-btn').forEach(b => b.classList.remove('active'));
-                        btn.classList.add('active');
-                    }
-                });
+                this.renderer.bookEl.querySelectorAll('.setting-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            }
 
-                // ==========================================
-                // 📝 BULLET EDITOR INTERACTIONS
-                // ==========================================
+            handleBulletControlClick(e, control) {
+                e.stopPropagation();
+                const block = control.closest('.bullet-block');
+                const targetBullet = this.getBulletFromBlock(block);
 
-                // 🖱️ Click to cycle bullet status!
-                book.addEventListener('pointerdown', e => {
-                    const control = e.target.closest('.bullet-control');
-                    if (!control) {
-                        // Make entire line clickable to focus text
-                        const block = e.target.closest('.bullet-block');
-                        if (block && e.target === block) {
-                            const textNode = block.querySelector('.bullet-text');
-                            if (textNode) textNode.focus();
-                        }
-                        return;
-                    }
+                if (targetBullet && targetBullet.type === "task") {
+                    let nextIdx = (TASK_STATUSES.indexOf(targetBullet.status) + 1) % TASK_STATUSES.length;
+                    targetBullet.status = TASK_STATUSES[nextIdx];
                     
-                    e.stopPropagation(); // 🛡️ Prevent dragging the page when clicking the bullet!
-
-                    const block = control.closest('.bullet-block');
-                    const bulletId = block.dataset.id;
+                    control.querySelector('.symbol').textContent = BULLET_SYMBOLS[targetBullet.status];
+                    block.className = `bullet-block status-${targetBullet.status}`;
                     
-                    // Deep search for the bullet
-                    let targetBullet = null;
-                    this.data.forEach(page => {
-                        targetBullet = targetBullet || page.f.find(b => b.id === bulletId) || page.b.find(b => b.id === bulletId);
-                    });
+                    this.saveData();
+                }
+            }
 
-                    if (targetBullet && targetBullet.type === "task") {
-                        const statuses = ["open", "completed", "migrated", "scheduled"];
-                        let nextIdx = (statuses.indexOf(targetBullet.status) + 1) % statuses.length;
-                        targetBullet.status = statuses[nextIdx];
-                        
-                        // Instantly update DOM symbol ⚡
-                        const symbols = { "open": "•", "completed": "✕", "migrated": ">", "scheduled": "<" };
-                        control.querySelector('.symbol').textContent = symbols[targetBullet.status];
-                        
-                        // 🪄 NEW: Instantly update the wrapper class to trigger the Strikethrough CSS!
-                        block.className = `bullet-block status-${targetBullet.status}`;
-                        
-                        this.saveData();
-                    }
-                });
+            handleBulletInput(e) {
+                if (!e.target.classList.contains('bullet-text')) return;
+                
+                const block = e.target.closest('.bullet-block');
+                const targetBullet = this.getBulletFromBlock(block);
+                if (!targetBullet) return;
 
-                // ✍️ Input handling: Markdown-style shortcuts!
-                book.addEventListener('input', e => {
-                    if (!e.target.classList.contains('bullet-text')) return;
+                let text = e.target.textContent;
+                const shortcutMatch = text.match(/^([\*x><o\-\.])\s/i);
+                
+                if (shortcutMatch) {
+                    const char = shortcutMatch[1].toLowerCase();
+                    const update = SHORTCUT_MAP[char];
                     
-                    const block = e.target.closest('.bullet-block');
-                    const bulletId = block.dataset.id;
-                    let text = e.target.textContent;
-
-                    // Deep search to find our bullet reference
-                    let targetBullet = null;
-                    this.data.forEach(page => {
-                        targetBullet = targetBullet || page.f.find(b => b.id === bulletId) || page.b.find(b => b.id === bulletId);
-                    });
-
-                    if (targetBullet) {
-                        // 🪄 Shortcut parsing: check if first two chars match our codes!
-                        const shortcutMatch = text.match(/^([\*x><o\-\.])\s/i);
+                    if (update) {
+                        Object.assign(targetBullet, update);
+                        e.target.textContent = text.substring(2);
+                        targetBullet.content = e.target.textContent;
                         
-                        if (shortcutMatch) {
-                            const char = shortcutMatch[1].toLowerCase();
-                            
-                            if (char === '*') { targetBullet.signifiers = ['*']; }
-                            else if (char === 'x') { targetBullet.type = 'task'; targetBullet.status = 'completed'; }
-                            else if (char === '>') { targetBullet.type = 'task'; targetBullet.status = 'migrated'; }
-                            else if (char === '<') { targetBullet.type = 'task'; targetBullet.status = 'scheduled'; }
-                            else if (char === 'o') { targetBullet.type = 'event'; targetBullet.status = 'open'; }
-                            else if (char === '-') { targetBullet.type = 'note'; targetBullet.status = 'open'; }
-                            else if (char === '.') { targetBullet.type = 'task'; targetBullet.status = 'open'; }
-
-                            // Clean the text and update DOM visually!
-                            e.target.textContent = text.substring(2);
-                            targetBullet.content = e.target.textContent;
-                            
-                            // Instantly re-render just this block to show the new symbol!
-                            const newHTML = this.renderer.renderBullets([targetBullet]);
-                            block.outerHTML = newHTML;
-                            
-                            // Restore focus to the end of the line
-                            const newBlock = document.querySelector(`[data-id="${bulletId}"] .bullet-text`);
-                            newBlock.focus();
-                            
-                        } else {
-                            targetBullet.content = text;
-                            if (text !== "" && targetBullet.type === "blank") {
-                                targetBullet.type = "task"; // Auto-restore to bullet if they type!
-                                block.classList.remove('type-blank');
-                            }
-                        }
-                        this.saveData();
+                        this.renderer.updateSingleBulletDOM(block, targetBullet);
+                        document.querySelector(`[data-id="${targetBullet.id}"] .bullet-text`).focus();
                     }
-                });
-
-                // ⌨️ Advanced Keyboard Navigation (Enter to flip, Backspace to clear)
-                book.addEventListener('keydown', e => {
-                    if (!e.target.classList.contains('bullet-text')) return;
-                    const block = e.target.closest('.bullet-block');
-                    const bulletId = block.dataset.id;
-
-                    // 🔙 Backspace at position 0 clears the bullet symbol!
-                    if (e.key === 'Backspace' && window.getSelection().anchorOffset === 0) {
-                        let targetBullet = null;
-                        this.data.forEach(p => { targetBullet = targetBullet || p.f.find(b => b.id === bulletId) || p.b.find(b => b.id === bulletId); });
-                        
-                        if (targetBullet && targetBullet.type !== 'blank') {
-                            e.preventDefault(); // Stop from deleting actual text
-                            targetBullet.type = 'blank';
-                            targetBullet.status = 'open';
-                            block.className = 'bullet-block type-blank';
-                            this.saveData();
-                        } else if (targetBullet && targetBullet.type === 'blank') {
-                            // Focus previous line if already blank!
-                            e.preventDefault();
-                            const prev = block.previousElementSibling;
-                            if (prev) prev.querySelector('.bullet-text').focus();
-                        }
+                } else {
+                    targetBullet.content = text;
+                    if (text !== "" && targetBullet.type === "blank") {
+                        targetBullet.type = "task"; 
+                        block.classList.remove('type-blank');
                     }
+                }
+                this.saveData();
+            }
 
-                    // ⬇️ Enter moves to next line OR flips page!
-                    if (e.key === 'Enter') {
+            handleBulletKeydown(e) {
+                if (!e.target.classList.contains('bullet-text')) return;
+                const block = e.target.closest('.bullet-block');
+                const targetBullet = this.getBulletFromBlock(block);
+                if (!targetBullet) return;
+
+                if (e.key === 'Backspace' && window.getSelection().anchorOffset === 0) {
+                    if (targetBullet.type !== 'blank') {
                         e.preventDefault(); 
-                        const nextBlock = block.nextElementSibling;
-                        if (nextBlock && nextBlock.classList.contains('bullet-block')) {
-                            nextBlock.querySelector('.bullet-text').focus();
-                        }
+                        targetBullet.type = 'blank';
+                        targetBullet.status = 'open';
+                        block.className = 'bullet-block type-blank';
+                        this.saveData();
+                    } else {
+                        e.preventDefault();
+                        const prev = block.previousElementSibling;
+                        if (prev) prev.querySelector('.bullet-text').focus();
                     }
-                });
+                }
 
-                // 🖐️ DRAG AND DROP REORDERING
-                let draggedBlock = null;
+                if (e.key === 'Enter') {
+                    e.preventDefault(); 
+                    const nextBlock = block.nextElementSibling;
+                    if (nextBlock && nextBlock.classList.contains('bullet-block')) {
+                        nextBlock.querySelector('.bullet-text').focus();
+                    }
+                }
+            }
 
+            bindDragDropEvents(book) {
                 book.addEventListener('dragstart', e => {
                     if (!e.target.classList.contains('bullet-block')) return;
-                    draggedBlock = e.target;
-                    setTimeout(() => draggedBlock.classList.add('is-dragging'), 0);
+                    this.state.draggedBlock = e.target;
+                    setTimeout(() => this.state.draggedBlock.classList.add('is-dragging'), 0);
                     e.dataTransfer.effectAllowed = 'move';
                 });
 
                 book.addEventListener('dragover', e => {
-                    e.preventDefault(); // Required to allow dropping!
+                    e.preventDefault(); 
                     const targetBlock = e.target.closest('.bullet-block');
-                    if (targetBlock && targetBlock !== draggedBlock && targetBlock.parentElement === draggedBlock.parentElement) {
-                        const contentDiv = targetBlock.parentElement;
-                        const blocks = [...contentDiv.querySelectorAll('.bullet-block')];
-                        const draggedIndex = blocks.indexOf(draggedBlock);
+                    if (targetBlock && targetBlock !== this.state.draggedBlock && targetBlock.parentElement === this.state.draggedBlock.parentElement) {
+                        const blocks = [...targetBlock.parentElement.querySelectorAll('.bullet-block')];
+                        const draggedIndex = blocks.indexOf(this.state.draggedBlock);
                         const targetIndex = blocks.indexOf(targetBlock);
                         
-                        if (draggedIndex < targetIndex) {
-                            targetBlock.after(draggedBlock);
-                        } else {
-                            targetBlock.before(draggedBlock);
-                        }
+                        if (draggedIndex < targetIndex) targetBlock.after(this.state.draggedBlock);
+                        else targetBlock.before(this.state.draggedBlock);
                     }
                 });
 
-                book.addEventListener('dragend', e => {
-                    if (!draggedBlock) return;
-                    draggedBlock.classList.remove('is-dragging');
+                book.addEventListener('dragend', () => {
+                    if (!this.state.draggedBlock) return;
+                    this.state.draggedBlock.classList.remove('is-dragging');
                     
-                    // 💾 Save the new order to storage!
-                    const contentDiv = draggedBlock.parentElement;
-                    const pageEl = contentDiv.closest('.page');
-                    const isFront = contentDiv.parentElement.classList.contains('front');
-                    const pageIdx = parseInt(pageEl.dataset.idx);
+                    const block = this.state.draggedBlock;
+                    const pageIdx = block.dataset.page;
+                    const faceType = block.dataset.face;
                     
-                    const newIds = [...contentDiv.querySelectorAll('.bullet-block')].map(b => b.dataset.id);
-                    const arrayToUpdate = isFront ? this.data[pageIdx].f : this.data[pageIdx].b;
+                    const newIds = [...block.parentElement.querySelectorAll('.bullet-block')].map(b => b.dataset.id);
+                    const arrayToUpdate = this.data[pageIdx][faceType];
                     
-                    // Sort the underlying data array to match the new DOM order!
                     arrayToUpdate.sort((a, b) => newIds.indexOf(a.id) - newIds.indexOf(b.id));
                     this.saveData();
                     
-                    draggedBlock = null;
+                    this.state.draggedBlock = null;
                 });
             }
 
+            // --- PAGE FLIP LOGIC ---
+
             handleKeyboard(e) {
+                if (e.target.tagName === 'INPUT' || e.target.isContentEditable) return;
                 if (e.key === 'ArrowRight') this.flipNext();
                 if (e.key === 'ArrowLeft') this.flipPrev();
             }
@@ -856,7 +801,7 @@
                     this.state.activePage = unflipped[0];
                     this.state.startAngle = 0;
                     this.state.activePage.classList.add('active');
-                    this.finalizeDrag(-100); // 🪄 Fakes a drag to trigger a smooth flip right!
+                    this.finalizeDrag(-100); 
                 }
             }
 
@@ -866,12 +811,12 @@
                     this.state.activePage = flipped[flipped.length - 1];
                     this.state.startAngle = -180;
                     this.state.activePage.classList.add('active');
-                    this.finalizeDrag(100); // 🪄 Fakes a drag to trigger a smooth flip left!
+                    this.finalizeDrag(100); 
                 }
             }
 
             handlePointerDown(e) {
-                if (e.target.closest('.settings-page')) return; // Ignore dragging if user starts drag on the settings panel!
+                if (e.target.closest('.settings-page')) return; 
                 if (!e.target.classList.contains('flip-zone')) return;
                 
                 const page = e.target.closest('.page');
@@ -879,7 +824,6 @@
                 
                 e.target.setPointerCapture(e.pointerId);
                 
-                // Clear any pending animations for this page if clicked rapidly ⚡
                 if (this.state.animationTimers.has(page)) {
                     clearTimeout(this.state.animationTimers.get(page));
                     this.state.animationTimers.delete(page);
@@ -889,7 +833,6 @@
                 this.state.startX = e.clientX;
                 this.state.startAngle = page.classList.contains('flipped') ? -180 : 0;
                 
-                // Prep page for raw dragging without CSS transitions 🛡️
                 page.classList.add('active');
                 page.style.transition = 'none';
                 page.style.zIndex = CONFIG.TOTAL_PAGES + 10;
@@ -900,15 +843,12 @@
                 
                 const deltaX = e.clientX - this.state.startX;
                 let newAngle = this.state.startAngle + (deltaX / window.innerWidth) * CONFIG.DRAG_SENSITIVITY;
-                newAngle = Math.max(-180, Math.min(0, newAngle));
-                
-                this.state.activePage.style.transform = `rotateY(${newAngle}deg)`;
+                this.state.activePage.style.transform = `rotateY(${Math.max(-180, Math.min(0, newAngle))}deg)`;
             }
 
             handlePointerUp(e) {
                 if (!this.state.activePage) return;
                 if (e.target.hasPointerCapture?.(e.pointerId)) e.target.releasePointerCapture(e.pointerId);
-                
                 this.finalizeDrag(e.clientX - this.state.startX);
             }
 
@@ -921,27 +861,23 @@
                 
                 const page = this.state.activePage;
                 const wasFlipped = this.state.startAngle === -180;
-                const isTap = Math.abs(deltaX) < 5; // 👆 Detects if it was a quick tap
+                const isTap = Math.abs(deltaX) < 5; 
 
-                // Re-enable CSS transitions and force DOM reflow to trigger them 🪄
                 page.style.transition = '';
                 void page.offsetWidth; 
                 page.style.transform = '';
 
-                // Calculate if page crossed the flip threshold 📏
                 if (isTap) {
-                    page.classList.toggle('flipped', !wasFlipped); // Tap instantly flips!
+                    page.classList.toggle('flipped', !wasFlipped); 
                 } else if (Math.abs(deltaX) > CONFIG.FLIP_THRESHOLD) {
                     page.classList.toggle('flipped', deltaX < 0 && !wasFlipped ? true : deltaX <= 0 && wasFlipped);
                 } else {
                     page.classList.toggle('flipped', wasFlipped);
                 }
 
-                // Clean up state immediately so user can grab another page 🧼
                 this.state.activePage = null;
                 this.renderer.updateZIndices();
 
-                // Wait for CSS animation to finish before removing .active class ⏱️
                 const timer = setTimeout(() => {
                     page.classList.remove('active');
                     this.renderer.updateZIndices();
@@ -953,7 +889,7 @@
         }
 
         // ==========================================
-        // 🚀 6. BOOTSTRAP THE APP
+        // 🚀 BOOTSTRAP APP
         // ==========================================
         document.addEventListener('DOMContentLoaded', () => {
             const renderer = new JournalRenderer('book', 'hint');
