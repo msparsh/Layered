@@ -36,10 +36,6 @@
     
     <script>
         // ==========================================
-        // 💾 PERSISTENCE LAYER (Desktop FileSystem Stub)
-        // ==========================================
-        // Note: Replace these stubs with actual IPC calls (e.g., window.electronAPI.writeFile)
-        // ==========================================
         // 💾 PERSISTENCE LAYER (Real Electron IPC)
         // ==========================================
         const FileSystemAPI = {
@@ -52,24 +48,23 @@
             async loadNotebookMeta() {
                 const meta = await FileSystemAPI.readJson('meta.json');
                 
-                // 🚨 FIX: Gracefully migrate old data schemas if they exist!
                 if (meta) {
-                    if (meta.pageOrder && !meta.spreadOrder) {
-                        console.log("🔄 Migrating old meta.json to version 1...");
-                        meta.spreadOrder = meta.pageOrder;
-                        delete meta.pageOrder;
+                    // 🚑 HEALER: Fix broken 'spread' state from previous bug!
+                    if (meta.spreadOrder) {
+                        console.log("🩹 Healing broken meta state back to 'pages' abstraction...");
+                        // Convert 'spread-xxx' to 'page-xxx' to match file paths!
+                        meta.pageOrder = meta.spreadOrder.map(id => id.replace('spread-', 'page-'));
+                        delete meta.spreadOrder;
                     }
                     
-                    // Ensure all required keys exist to prevent undefined crashes
-                    meta.version = meta.version || 1;
-                    meta.currentSpread = meta.currentSpread || 0;
-                    meta.spreadOrder = meta.spreadOrder || [];
+                    meta.version = meta.version || 2;
+                    meta.currentP = meta.currentP || 0;
+                    meta.pageOrder = meta.pageOrder || [];
                     
                     return meta;
                 }
                 
-                // Fresh start
-                return { version: 1, currentSpread: 0, spreadOrder: [] };
+                return { version: 2, currentP: 0, pageOrder: [] };
             },
             async saveNotebookMeta(metaData) {
                 await FileSystemAPI.writeJsonAtomic('meta.json', metaData);
@@ -93,10 +88,10 @@
         const CYCLE = ['task', 'completed', 'migrated', 'scheduled', 'event', 'note'];
         const MD_MAP = {'* ': 'task', 'x ': 'completed', '> ': 'migrated', '< ': 'scheduled', 'o ': 'event', '- ': 'note', '# ': 'h1', '## ': 'h2', '### ': 'h3', '#### ': 'h4', '##### ': 'h5', '###### ': 'h6'};
 
-        // App State
-        let metaData = { version: 1, currentSpread: 0, spreadOrder: [] };
-        let pagesData = []; // Array of arrays (each sub-array is a page's blocks)
-        let currentP = 0;   // Current active page index
+        // App State (Unified 'Page' Abstraction 📖)
+        let metaData = { version: 2, currentP: 0, pageOrder: [] };
+        let pagesData = []; 
+        let currentP = 0;   
         let saveTimeout = null;
 
         // ==========================================
@@ -109,17 +104,16 @@
         async function initApp() {
             metaData = await StorageManager.loadNotebookMeta();
             
-            if (metaData.spreadOrder.length === 0) {
-                metaData.spreadOrder.push(`spread-${crypto.randomUUID()}`, `spread-${crypto.randomUUID()}`);
+            if (metaData.pageOrder.length === 0) {
+                metaData.pageOrder.push(`page-${crypto.randomUUID()}`, `page-${crypto.randomUUID()}`);
                 await StorageManager.saveNotebookMeta(metaData);
             }
 
             pagesData = await Promise.all(
-                metaData.spreadOrder.map(id => StorageManager.loadPage(id))
+                metaData.pageOrder.map(id => StorageManager.loadPage(id))
             );
 
-            // Restore last viewed spread!
-            currentP = metaData.currentSpread || 0;
+            currentP = metaData.currentP || 0;
             renderApp();
         }
         
@@ -134,12 +128,11 @@
                 const p2Empty = (pagesData[i+1] || []).every(b => b.text.trim() === '' && b.type === 'text');
 
                 if (p1Empty && p2Empty) {
-                    // 🗑️ Move the orphaned files to the trash!
-                    await StorageManager.trashPage(metaData.spreadOrder[i]);
-                    await StorageManager.trashPage(metaData.spreadOrder[i+1]);
+                    await StorageManager.trashPage(metaData.pageOrder[i]);
+                    await StorageManager.trashPage(metaData.pageOrder[i+1]);
 
                     pagesData.splice(i, 2);
-                    metaData.spreadOrder.splice(i, 2);
+                    metaData.pageOrder.splice(i, 2);
                     
                     if (i < currentP) currentP -= 2; 
                     layoutChanged = true;
@@ -147,28 +140,26 @@
             }
 
             if (layoutChanged) {
-                metaData.currentSpread = currentP;
+                metaData.currentP = currentP;
                 await StorageManager.saveNotebookMeta(metaData);
             }
             return layoutChanged;
         }
 
-        // Debounced Async Save
         async function save(forceRender = false) { 
             clearTimeout(saveTimeout);
             saveTimeout = setTimeout(async () => {
                 const layoutChanged = await cleanEmptySpreads();
                 
                 const activePair = Math.floor(currentP / 2) * 2;
-                if(metaData.spreadOrder[activePair]) {
-                    await StorageManager.savePage(metaData.spreadOrder[activePair], pagesData[activePair]);
+                if(metaData.pageOrder[activePair]) {
+                    await StorageManager.savePage(metaData.pageOrder[activePair], pagesData[activePair]);
                 }
-                if(metaData.spreadOrder[activePair + 1]) {
-                    await StorageManager.savePage(metaData.spreadOrder[activePair + 1], pagesData[activePair + 1]);
+                if(metaData.pageOrder[activePair + 1]) {
+                    await StorageManager.savePage(metaData.pageOrder[activePair + 1], pagesData[activePair + 1]);
                 }
                 
-                // Track the current spread in the new meta object!
-                metaData.currentSpread = currentP;
+                metaData.currentP = currentP;
                 await StorageManager.saveNotebookMeta(metaData);
 
                 if (layoutChanged || forceRender) renderApp();
@@ -176,7 +167,7 @@
             }, 500); 
         }
 
-        function getCaretPos(el) { /* ... standard caret logic ... */ 
+        function getCaretPos(el) { 
             const sel = window.getSelection();
             if (sel.rangeCount) {
                 const r = sel.getRangeAt(0).cloneRange();
@@ -204,12 +195,11 @@
         // 🎨 RENDERING
         // ==========================================
         function renderApp() {
-            // Ensure even number of pages in memory
             if (pagesData.length % 2 !== 0) {
                 const newId = `page-${crypto.randomUUID()}`;
                 metaData.pageOrder.push(newId);
                 pagesData.push([createBlock()]);
-                StorageManager.saveNotebookMeta(metaData.pageOrder);
+                StorageManager.saveNotebookMeta(metaData);
             }
 
             const app = document.getElementById('app');
@@ -282,13 +272,12 @@
             const nextP = currentP + dir * 2;
             if (nextP < 0) return;
             if (nextP >= pagesData.length) {
-                // Generate new IDs and add to order
                 const id1 = `page-${crypto.randomUUID()}`;
                 const id2 = `page-${crypto.randomUUID()}`;
                 metaData.pageOrder.push(id1, id2);
                 pagesData.push([createBlock()], [createBlock()]);
                 
-                await StorageManager.saveNotebookMeta(metaData.pageOrder);
+                await StorageManager.saveNotebookMeta(metaData);
                 renderApp();
             }
             currentP = nextP;
