@@ -26,8 +26,6 @@
             -webkit-hyphens: auto; 
             hyphens: auto; 
         }
-
-
     </style>
 </head>
 <body class="text-zinc-800">
@@ -36,29 +34,86 @@
     </div>
 
     <div id="page-indicator" class="fixed bottom-2 left-1/2 -translate-x-1/2 flex gap-3 z-50 p-4 cursor-grab active:cursor-grabbing touch-none"></div>
+    
     <script>
+        // ==========================================
+        // 🧠 CONFIG & STATE
+        // ==========================================
         const BULLETS = { task: '•', completed: '✕', migrated: '>', scheduled: '<', event: '○', note: '-' };
         const CYCLE = ['task', 'completed', 'migrated', 'scheduled', 'event', 'note'];
+        const MD_MAP = {'* ': 'task', 'x ': 'completed', '> ': 'migrated', '< ': 'scheduled', 'o ': 'event', '- ': 'note', '# ': 'h1', '## ': 'h2', '### ': 'h3', '#### ': 'h4', '##### ': 'h5', '###### ': 'h6'};
 
-        // 🧠 State Management with Last Page Memory
         let pagesData = JSON.parse(localStorage.getItem('bujo_pages_spread')) || [[createBlock()], [createBlock()]];
         let storedPage = parseInt(localStorage.getItem('bujo_last_page'));
         let currentP = isNaN(storedPage) ? 0 : storedPage;
 
+        // ==========================================
+        // 🛠️ UTILS & DATA MANAGEMENT
+        // ==========================================
         function createBlock(text = '', depth = 0, type = 'text') { 
             return { id: crypto.randomUUID(), type, text, depth }; 
         }
         
-        function save() { 
-            localStorage.setItem('bujo_pages_spread', JSON.stringify(pagesData)); 
-            localStorage.setItem('bujo_last_page', currentP);
-            renderIndicator(); 
+        function cleanEmptySpreads() {
+            let currentPair = Math.floor(currentP / 2);
+            let cleaned = false;
+            
+            // Iterate backwards by pairs to safely remove elements without messing up the loop index
+            for (let i = pagesData.length - 2; i >= 0; i -= 2) {
+                // Keep the current active spread, and ensure at least 1 spread remains total
+                if (Math.floor(i / 2) === currentPair || pagesData.length <= 2) continue;
+
+                const p1Empty = pagesData[i].every(b => b.text.trim() === '' && b.type === 'text');
+                const p2Empty = (pagesData[i+1] || []).every(b => b.text.trim() === '' && b.type === 'text');
+
+                if (p1Empty && p2Empty) {
+                    pagesData.splice(i, 2);
+                    // Adjust current page if we deleted a spread before the active one
+                    if (i < currentP) currentP -= 2; 
+                    cleaned = true;
+                }
+            }
+            return cleaned;
         }
 
-        /**
-         * 🎨 RENDERING
-         */
+        function save(forceRender = false) { 
+            const layoutChanged = cleanEmptySpreads();
+            localStorage.setItem('bujo_pages_spread', JSON.stringify(pagesData)); 
+            localStorage.setItem('bujo_last_page', currentP);
+            
+            if (layoutChanged || forceRender) renderApp();
+            else renderIndicator(); 
+        }
+
+        function getCaretPos(el) {
+            const sel = window.getSelection();
+            if (sel.rangeCount) {
+                const r = sel.getRangeAt(0).cloneRange();
+                r.selectNodeContents(el);
+                r.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset);
+                return r.toString().length;
+            }
+            return 0;
+        }
+
+        function focusBlock(id, atStart = false) {
+            setTimeout(() => {
+                const el = document.querySelector(`[data-id="${id}"] .bullet-text`);
+                if (!el) return;
+                el.focus();
+                const sel = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                range.collapse(atStart);
+                sel.removeAllRanges(); sel.addRange(range);
+            }, 10);
+        }
+
+        // ==========================================
+        // 🎨 RENDERING
+        // ==========================================
         function renderApp() {
+            // Ensure even number of pages
             if (pagesData.length % 2 !== 0) pagesData.push([createBlock()]);
 
             const app = document.getElementById('app');
@@ -82,14 +137,18 @@
             list.innerHTML = pagesData[pIdx].map(b => {
                 let textClass = "flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ";
                 
-                if (b.type === 'h1') textClass += "text-4xl font-bold mt-6 mb-2 ";
-                else if (b.type === 'h2') textClass += "text-3xl font-bold mt-5 mb-2 ";
-                else if (b.type === 'h3') textClass += "text-2xl font-bold mt-4 mb-1 ";
-                else if (b.type === 'h4') textClass += "text-xl font-semibold mt-3 mb-1 ";
-                else if (b.type === 'h5') textClass += "text-lg font-semibold mt-2 mb-1 ";
-                else if (b.type === 'h6') textClass += "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500 ";
-                else textClass += "text-[1.05rem] leading-relaxed ";
+                // Typography styles
+                const styles = {
+                    'h1': "text-4xl font-bold mt-6 mb-2 ",
+                    'h2': "text-3xl font-bold mt-5 mb-2 ",
+                    'h3': "text-2xl font-bold mt-4 mb-1 ",
+                    'h4': "text-xl font-semibold mt-3 mb-1 ",
+                    'h5': "text-lg font-semibold mt-2 mb-1 ",
+                    'h6': "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500 "
+                };
+                textClass += styles[b.type] || "text-[1.05rem] leading-relaxed ";
 
+                // State styles
                 if (b.type === 'completed') textClass += "line-through text-zinc-400 opacity-60";
                 else if (['migrated', 'scheduled'].includes(b.type)) textClass += "italic text-zinc-500";
 
@@ -111,7 +170,6 @@
 
         function updateView() {
             document.getElementById('app').style.transform = `translateX(-${currentP * 50}vw)`;
-            localStorage.setItem('bujo_last_page', currentP);
             renderIndicator();
         }
 
@@ -123,10 +181,12 @@
             ).join('');
         }
 
+        // ==========================================
+        // 🕹️ NAVIGATION & INTERACTIONS
+        // ==========================================
         function jumpToPair(pairIdx) {
             currentP = pairIdx * 2;
-            updateView();
-            save();
+            updateView(); save();
         }
 
         function changePage(dir) {
@@ -142,73 +202,42 @@
 
         function cycleType(block, pIdx) {
             let currentIndex = CYCLE.indexOf(block.type);
-            if (currentIndex === -1) block.type = 'task'; 
-            else block.type = CYCLE[(currentIndex + 1) % CYCLE.length];
+            block.type = currentIndex === -1 ? 'task' : CYCLE[(currentIndex + 1) % CYCLE.length];
             save(); renderPage(pIdx); focusBlock(block.id);
         }
 
-        function focusBlock(id, atStart = false) {
-            setTimeout(() => {
-                const el = document.querySelector(`[data-id="${id}"] .bullet-text`);
-                if (!el) return;
-                el.focus();
-                const sel = window.getSelection();
-                const range = document.createRange();
-                range.selectNodeContents(el);
-                range.collapse(atStart);
-                sel.removeAllRanges(); sel.addRange(range);
-            }, 10);
-        }
-
-        function getCaretPos(el) {
-            const sel = window.getSelection();
-            if (sel.rangeCount) {
-                const r = sel.getRangeAt(0).cloneRange();
-                r.selectNodeContents(el);
-                r.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset);
-                return r.toString().length;
-            }
-            return 0;
-        }
-
-        /**
-         * 🕹️ EVENTS
-         */
+        // ==========================================
+        // ⌨️ EVENT LISTENERS
+        // ==========================================
         document.addEventListener('input', e => {
-            if(e.target.classList.contains('bullet-text')) {
-                const pIdx = parseInt(e.target.closest('.bujo-list').dataset.idx);
-                const block = pagesData[pIdx].find(b => b.id === e.target.closest('.bullet-block').dataset.id);
-                block.text = e.target.textContent;
+            if(!e.target.classList.contains('bullet-text')) return;
+            
+            const pIdx = parseInt(e.target.closest('.bujo-list').dataset.idx);
+            const block = pagesData[pIdx].find(b => b.id === e.target.closest('.bullet-block').dataset.id);
+            block.text = e.target.textContent;
 
-                const mdMap = {'* ': 'task', 'x ': 'completed', '> ': 'migrated', '< ': 'scheduled', 'o ': 'event', '- ': 'note', '# ': 'h1', '## ': 'h2'};
-                for (const [prefix, type] of Object.entries(mdMap)) {
-                    if (e.target.textContent.startsWith(prefix)) {
-                        block.type = type;
-                        block.text = e.target.textContent.substring(prefix.length);
-                        save(); renderPage(pIdx); focusBlock(block.id, true);
-                        break;
-                    }
+            for (const [prefix, type] of Object.entries(MD_MAP)) {
+                if (e.target.textContent.startsWith(prefix)) {
+                    block.type = type;
+                    block.text = e.target.textContent.substring(prefix.length);
+                    save(); renderPage(pIdx); focusBlock(block.id, true);
+                    return;
                 }
-                save();
             }
+            // Save without triggering a full re-render on every keystroke
+            localStorage.setItem('bujo_pages_spread', JSON.stringify(pagesData)); 
         });
 
         document.addEventListener('keydown', e => {
             const isEditing = e.target.classList.contains('bullet-text');
             
-            // 🚪 Global Mode Listeners
             if (!isEditing) {
                 if (e.key === 'ArrowLeft') { e.preventDefault(); changePage(-1); }
                 if (e.key === 'ArrowRight') { e.preventDefault(); changePage(1); }
                 return;
             }
 
-            // 🚫 Escape Edit Mode
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                e.target.blur();
-                return;
-            }
+            if (e.key === 'Escape') { e.preventDefault(); e.target.blur(); return; }
 
             const pIdx = parseInt(e.target.closest('.bujo-list').dataset.idx);
             const blockDiv = e.target.closest('.bullet-block');
@@ -216,21 +245,10 @@
             const bIdx = pageList.findIndex(b => b.id === blockDiv.dataset.id);
             const block = pageList[bIdx];
 
-            // ⌨️ Alt + Enter : Next Page
-            if (e.altKey && e.key === 'Enter') {
-                e.preventDefault();
-                changePage(1);
-                return;
-            }
+            if (e.altKey && e.key === 'Enter') { e.preventDefault(); changePage(1); return; }
+            if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); cycleType(block, pIdx); return; }
 
-            // ⌨️ Ctrl + Enter : Cycle Type
-            if (e.ctrlKey && e.key === 'Enter') {
-                e.preventDefault();
-                cycleType(block, pIdx);
-                return;
-            }
-
-            // ⌨️ Enter : New Block
+            // Enter : New Block
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 const caret = getCaretPos(e.target);
@@ -243,7 +261,7 @@
                 return;
             }
 
-            // ⌨️ Tab : Indent
+            // Tab : Indent
             if (e.key === 'Tab') {
                 e.preventDefault();
                 block.depth = Math.max(0, Math.min(4, block.depth + (e.shiftKey ? -1 : 1)));
@@ -251,7 +269,7 @@
                 return;
             }
             
-            // ⌨️ Backspace : Remove / Merge blocks smoothly
+            // Backspace : Remove / Merge
             if (e.key === 'Backspace' && getCaretPos(e.target) === 0) {
                 if (block.type !== 'text') {
                     e.preventDefault(); block.type = 'text'; save(); renderPage(pIdx); focusBlock(block.id);
@@ -263,47 +281,41 @@
                     pageList.splice(bIdx, 1);
                     save(); renderPage(pIdx);
                     
-                    // Carefully refocus merged node
                     setTimeout(() => {
                         const el = document.querySelector(`[data-id="${prevBlock.id}"] .bullet-text`);
                         if (!el) return;
                         el.focus();
                         const sel = window.getSelection();
                         const range = document.createRange();
-                        if (el.firstChild) {
-                            range.setStart(el.firstChild, prevLength);
-                        } else {
-                            range.setStart(el, 0);
-                        }
+                        if (el.firstChild) range.setStart(el.firstChild, prevLength);
+                        else range.setStart(el, 0);
                         range.collapse(true);
                         sel.removeAllRanges(); sel.addRange(range);
                     }, 10);
                 }
             }
 
-            // ⌨️ Up/Down Arrows : Smooth block navigation
+            // Up/Down Arrows : Navigate
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 const sel = window.getSelection();
                 if (!sel.rangeCount) return;
                 
-                const range = sel.getRangeAt(0);
-                const rect = range.getBoundingClientRect();
+                const rect = sel.getRangeAt(0).getBoundingClientRect();
                 const elRect = e.target.getBoundingClientRect();
                 
-                // If cursor is near top of element, allow jump up
                 if (e.key === 'ArrowUp' && (rect.top - elRect.top < 24)) {
                     const prev = blockDiv.previousElementSibling;
                     if (prev) { e.preventDefault(); focusBlock(prev.dataset.id, false); }
-                } 
-                // If cursor is near bottom of element, allow jump down
-                else if (e.key === 'ArrowDown' && (elRect.bottom - rect.bottom < 24)) {
+                } else if (e.key === 'ArrowDown' && (elRect.bottom - rect.bottom < 24)) {
                     const next = blockDiv.nextElementSibling;
                     if (next) { e.preventDefault(); focusBlock(next.dataset.id, true); }
                 }
             }
         });
 
-        // ✋ Bullet-Only Drag & Drop
+        // ==========================================
+        // ✋ DRAG & DROP
+        // ==========================================
         let draggedId = null;
         document.addEventListener('dragstart', e => {
             const block = e.target.closest('.bullet-block');
@@ -330,7 +342,7 @@
             const el = document.querySelector(`[data-id="${draggedId}"]`);
             if(el) {
                 el.classList.remove('dragging');
-                el.setAttribute('draggable', 'false'); // Reset after drag
+                el.setAttribute('draggable', 'false'); 
             }
             const allBlocks = pagesData.flat();
             pagesData = pagesData.map((_, i) => {
@@ -340,46 +352,46 @@
             save(); draggedId = null;
         });
 
+        // ==========================================
+        // 🎚️ SCRUBBING
+        // ==========================================
+        const indicator = document.getElementById('page-indicator');
+        let isScrubbing = false;
 
-        // 🎚️ Smooth Scrubbing Logic for Classic Dots
-const indicator = document.getElementById('page-indicator');
-let isScrubbing = false;
+        function handleScrub(e) {
+            const rect = indicator.getBoundingClientRect();
+            const pairCount = Math.ceil(pagesData.length / 2);
+            if (pairCount <= 1) return;
 
-indicator.addEventListener('pointerdown', e => {
-    isScrubbing = true;
-    document.getElementById('app').style.transitionDuration = '0s'; // ⚡ Snap instantly while dragging
-    indicator.setPointerCapture(e.pointerId);
-    handleScrub(e);
-});
+            let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+            let index = Math.floor((x / rect.width) * pairCount);
+            index = Math.min(index, pairCount - 1); 
 
-indicator.addEventListener('pointermove', e => {
-    if (!isScrubbing) return;
-    handleScrub(e);
-});
+            if (currentP !== index * 2) {
+                currentP = index * 2;
+                updateView();
+            }
+        }
 
-indicator.addEventListener('pointerup', e => {
-    isScrubbing = false;
-    document.getElementById('app').style.transitionDuration = ''; // 🌊 Restore smooth animation
-    indicator.releasePointerCapture(e.pointerId);
-    save();
-});
+        indicator.addEventListener('pointerdown', e => {
+            isScrubbing = true;
+            document.getElementById('app').style.transitionDuration = '0s'; 
+            indicator.setPointerCapture(e.pointerId);
+            handleScrub(e);
+        });
 
-function handleScrub(e) {
-    const rect = indicator.getBoundingClientRect();
-    const pairCount = Math.ceil(pagesData.length / 2);
-    if (pairCount <= 1) return;
+        indicator.addEventListener('pointermove', e => {
+            if (isScrubbing) handleScrub(e);
+        });
 
-    // Map mouse X position to the correct page index
-    let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-    let index = Math.floor((x / rect.width) * pairCount);
-    index = Math.min(index, pairCount - 1); // Prevent out of bounds
+        indicator.addEventListener('pointerup', e => {
+            isScrubbing = false;
+            document.getElementById('app').style.transitionDuration = ''; 
+            indicator.releasePointerCapture(e.pointerId);
+            save();
+        });
 
-    if (currentP !== index * 2) {
-        currentP = index * 2;
-        updateView();
-    }
-}
-
+        // Initialization
         renderApp();
     </script>
 </body>
