@@ -4,506 +4,249 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Minimalist Bujo - Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* 🎨 CORE THEME */
-        :root {
-            --bg: #fafafa;
-            --text: #2c2c2c;
-            --text-dim: #a0a0a0;
-            --line: #e8e8e8;
-            --accent: #000;
-            --menu-bg: #fff;
-        }
-
-        /* 🌍 RESETS */
-        *, *::before, *::after {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        body {
-            background-color: var(--bg);
-            color: var(--text);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            display: flex;
-            justify-content: center;
-            padding: 10vh 20px 20vh;
-            overflow-y: scroll;
-        }
-
-        .journal-container {
-            width: 100%;
-            max-width: 600px;
-        }
-
-        h1 {
-            font-weight: 500;
-            font-size: 2rem;
-            margin-left: 4px;
-            margin-bottom: 2.5rem;
-            color: var(--accent);
-            letter-spacing: -0.5px;
-        }
-
-        .bujo-list {
-            position: relative;
-            padding-left: 4px;
-            min-height: 50vh;
-        }
-
-        /* 📝 BULLET BLOCKS */
-        @keyframes expandDown {
-            from { transform: translateY(-8px) scaleY(0.95); }
-            to { transform: translateY(0) scaleY(1); }
-        }
-
-        .bullet-block {
-            display: flex;
-            align-items: flex-start;
-            position: relative;
-            margin-bottom: 12px;
-            min-height: 28px;
-            z-index: 1;
-            transition: margin-left 0.1s linear; 
-            animation: expandDown 0.15s cubic-bezier(0.2, 0, 0, 1) forwards;
-            transform-origin: top;
-        }
-
-        .bullet-block.is-dragging { opacity: 0.4; }
-
-        /* 🔘 BULLET ICON CONTROLS */
-        .bullet-control {
-            position: absolute;
-            left: -28px;
-            top: 2px;
-            width: 24px;
-            height: 24px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: transparent;
-            cursor: grab;
-            color: var(--text-dim);
-            font-size: 1.1rem;
-            user-select: none;
-            font-weight: bold;
-            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.3s ease;
-            opacity: 0.5;
-        }
-
-        .bullet-block:hover .bullet-control { opacity: 1; color: var(--accent); }
-        .bullet-control:active { transform: scale(0.7); cursor: grabbing; }
-
-        /* ✍️ TEXT INPUT */
-        .bullet-text {
-            flex: 1;
-            outline: none;
-            line-height: 1.6;
-            font-size: 1.05rem;
-            min-height: 28px;
-            height: auto;
-            word-wrap: break-word;
-            transition: color 0.3s ease;
-        }
-
-        .bullet-text:empty::before { content: "\FEFF"; }
-
-        /* ✨ VISUAL FEEDBACK */
-        .status-completed { opacity: 0.4; }
-        .status-completed .bullet-text { text-decoration: line-through; color: var(--text-dim); }
-        .status-migrated .bullet-text, 
-        .status-scheduled .bullet-text { color: var(--text-dim); font-style: italic; }
-        
-        /* 🎛️ RADIAL/QUICK ACTION MENU */
-        .action-menu {
-            position: absolute;
-            left: -10px;
-            top: -40px;
-            display: flex;
-            gap: 6px;
-            background: var(--menu-bg);
-            border: 1px solid var(--line);
-            border-radius: 30px;
-            padding: 6px 12px;
-            z-index: 10;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-            animation: expandDown 0.15s ease forwards;
-        }
-        
-        .action-menu button {
-            background: none;
-            border: none;
-            font-size: 1rem;
-            cursor: pointer;
-            color: var(--text);
-            transition: transform 0.1s;
-        }
-        
-        .action-menu button:hover { transform: scale(1.2); }
-
+        /* ✨ Essential overrides */
+        body { overflow: hidden; background-color: #fafafa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        [contenteditable]:empty::before { content: "\FEFF"; }
+        .bullet-block { animation: slideIn 0.15s ease-out forwards; }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+        ::-webkit-scrollbar { display: none; }
     </style>
 </head>
-<body>
+<body class="text-zinc-800 selection:bg-zinc-200">
 
-    <div class="journal-container">
-        <h1 id="date-header">Daily Log</h1>
-        <div class="bujo-list" id="bujo-list">
+    <div id="app" class="flex transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] w-full h-screen will-change-transform">
         </div>
-    </div>
+
+    <div id="page-indicator" class="fixed bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-50"></div>
 
     <script>
         /**
-         * 🛠️ CORE CONFIGURATION & STATE
+         * 🛠️ CORE CONFIGURATION & STATE 
          */
-        const STORAGE_KEY = 'pro_bujo_data';
-        const MEMORY_KEY = 'pro_bujo_memory';
-        
-        const SYMBOLS = {
-            task: { open: '•', completed: '✕', migrated: '>', scheduled: '<' },
-            event: { open: '○' },
-            note: { open: '-' },
-            priority: { open: '!' },
-            question: { open: '?' }
-        };
+        const SYMBOLS = { task: { open: '•', completed: '✕', migrated: '>', scheduled: '<' }, event: { open: '○' }, note: { open: '-' }, priority: { open: '!' }, question: { open: '?' } };
+        const INSTANT = { '.': 'task', 'o': 'event', '-': 'note', '!': 'priority', '?': 'question' };
+        const CYCLE = ['open', 'completed', 'migrated', 'scheduled'];
 
-        const INSTANT_KEYS = { '.': 'task', 'o': 'event', '-': 'note', '!': 'priority', '?': 'question' };
-        const TASK_CYCLE = ['open', 'completed', 'migrated', 'scheduled'];
+        let pagesData = JSON.parse(localStorage.getItem('bujo_pages_pro')) || [[createBlock()]];
+        let currentP = 0;
 
-        const options = { weekday: 'long', month: 'long', day: 'numeric' };
-        document.getElementById('date-header').textContent = new Date().toLocaleDateString('en-US', options);
-
-        let blocks = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [createBlock()];
-        const listEl = document.getElementById('bujo-list');
-        
-        // Drag State
-        let draggedId = null;
-        let dragStartX = 0;
-        let dragInitialDepth = 0;
-        
-        let pressTimer = null;
-
-        function createBlock(text = '', depth = 0, type = 'task') {
-            return { id: crypto.randomUUID(), type, status: 'open', text, depth };
+        function createBlock(text = '', depth = 0, type = 'task') { 
+            return { id: crypto.randomUUID(), type, status: 'open', text, depth }; 
         }
-
-        function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(blocks)); }
-
-        /**
-         * 🎨 DOM RENDERING
-         */
-        function render() {
-            Array.from(listEl.children).forEach(child => {
-                if(child.classList.contains('bullet-block')) child.remove();
-            });
-            blocks.forEach(block => listEl.appendChild(createBlockNode(block)));
-        }
-
-        function createBlockNode(block) {
-            const div = document.createElement('div');
-            div.className = `bullet-block status-${block.status} type-${block.type}`;
-            div.dataset.id = block.id;
-            div.style.marginLeft = `${block.depth * 28}px`;
-
-            const control = document.createElement('div');
-            control.className = 'bullet-control';
-            control.textContent = SYMBOLS[block.type][block.status] || SYMBOLS[block.type].open;
-            control.draggable = true;
-
-            // Long Press Logic ⏱️
-            control.onmousedown = control.ontouchstart = (e) => {
-                pressTimer = window.setTimeout(() => showActionMenu(block.id, div), 400);
-            };
-            control.onmouseup = control.ontouchend = control.onmouseleave = () => {
-                if (pressTimer) clearTimeout(pressTimer);
-            };
-            control.onclick = () => {
-                if (pressTimer) clearTimeout(pressTimer);
-                closeMenus();
-                cycleStatus(block.id);
-            };
-
-            // Drag Init ✋
-            control.ondragstart = (e) => {
-                draggedId = block.id;
-                dragStartX = e.clientX;
-                dragInitialDepth = block.depth;
-                setTimeout(() => div.classList.add('is-dragging'), 0);
-                e.dataTransfer.effectAllowed = 'move';
-                
-                // Transparent drag image to keep UI clean
-                const img = new Image();
-                img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-                e.dataTransfer.setDragImage(img, 0, 0);
-            };
-
-            const text = document.createElement('div');
-            text.className = 'bullet-text';
-            text.contentEditable = true;
-            text.spellcheck = false;
-            text.textContent = block.text;
-
-            text.oninput = (e) => handleInput(e, block.id);
-            text.onkeydown = (e) => handleKeydown(e, block.id);
-            text.onfocus = () => closeMenus();
-
-            div.append(control, text);
-            return div;
-        }
-
-        function updateBlockDOM(block) {
-            const el = document.querySelector(`[data-id="${block.id}"]`);
-            if (el) {
-                el.className = `bullet-block status-${block.status} type-${block.type}`;
-                el.querySelector('.bullet-control').textContent = SYMBOLS[block.type][block.status] || SYMBOLS[block.type].open;
-                el.style.marginLeft = `${block.depth * 28}px`;
-            }
+        
+        function save() { 
+            localStorage.setItem('bujo_pages_pro', JSON.stringify(pagesData)); 
+            renderIndicator(); 
         }
 
         /**
-         * 🕹️ INTERACTION LOGIC
+         * 🎨 DOM RENDERING (TAILWIND POWERED)
          */
-        function cycleStatus(id) {
-            const block = blocks.find(b => b.id === id);
-            if (block.type === 'task') {
-                const nextIdx = (TASK_CYCLE.indexOf(block.status) + 1) % TASK_CYCLE.length;
-                block.status = TASK_CYCLE[nextIdx];
-                save(); updateBlockDOM(block);
+        function renderApp() {
+            const app = document.getElementById('app');
+            app.innerHTML = pagesData.map((p, i) => `
+                <div class="w-screen h-screen flex-shrink-0 flex justify-center px-6 pt-24 pb-32 overflow-y-auto">
+                    <div class="w-full max-w-lg bujo-list relative" data-idx="${i}"></div>
+                </div>
+            `).join('');
+            pagesData.forEach((_, i) => renderPage(i));
+            updateView();
+        }
+
+        function renderPage(pIdx) {
+            const list = document.querySelector(`.bujo-list[data-idx="${pIdx}"]`);
+            if(!list) return;
+            
+            list.innerHTML = pagesData[pIdx].map(b => {
+                let textClass = "flex-1 outline-none text-[1.05rem] leading-relaxed bullet-text transition-all duration-300 ";
+                if (b.status === 'completed') textClass += "line-through text-zinc-400 opacity-60";
+                else if (['migrated', 'scheduled'].includes(b.status)) textClass += "italic text-zinc-500";
+
+                return `
+                <div class="relative flex items-start mb-3 bullet-block group" data-id="${b.id}" style="margin-left: ${b.depth * 28}px">
+                    <div class="absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center cursor-grab opacity-40 group-hover:opacity-100 group-hover:text-black text-zinc-500 font-bold transition-transform active:scale-75 bullet-control" draggable="true">
+                        ${SYMBOLS[b.type][b.status] || SYMBOLS[b.type].open}
+                    </div>
+                    <div class="${textClass}" contenteditable="true" spellcheck="false">${b.text}</div>
+                </div>`;
+            }).join('');
+        }
+
+        function updateView() {
+            document.getElementById('app').style.transform = `translateX(-${currentP * 100}vw)`;
+            renderIndicator();
+        }
+
+        function renderIndicator() {
+            document.getElementById('page-indicator').innerHTML = pagesData.map((_, i) => 
+                `<span class="h-2 rounded-full transition-all duration-300 ${i === currentP ? 'w-6 bg-zinc-800' : 'w-2 bg-zinc-300'}"></span>`
+            ).join('');
+        }
+
+        function changePage(dir) {
+            currentP += dir;
+            if (currentP < 0) currentP = 0;
+            if (currentP >= pagesData.length) { pagesData.push([createBlock()]); renderApp(); }
+            updateView(); save();
+        }
+
+        function focusBlock(id, atStart = false) {
+            setTimeout(() => {
+                const el = document.querySelector(`[data-id="${id}"] .bullet-text`);
+                if (!el) return;
+                el.focus();
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                range.collapse(atStart);
+                const sel = window.getSelection();
+                sel.removeAllRanges(); sel.addRange(range);
+            }, 10);
+        }
+
+        function getCaretPos(el) {
+            let caret = 0;
+            const sel = window.getSelection();
+            if (sel.rangeCount) {
+                const r = sel.getRangeAt(0).cloneRange();
+                r.selectNodeContents(el);
+                r.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset);
+                caret = r.toString().length;
             }
+            return caret;
         }
 
-        function setStatus(id, status) {
-            const block = blocks.find(b => b.id === id);
-            if (block) { block.status = status; save(); updateBlockDOM(block); }
-            closeMenus();
-        }
-
-        function deleteBlock(id) {
-            const index = blocks.findIndex(b => b.id === id);
-            if (blocks.length > 1) {
-                blocks.splice(index, 1);
-                save(); render();
+        /**
+         * 🕹️ EVENT DELEGATION (WRITING LESS CODE)
+         */
+        // 1. Inputs ✍️
+        document.addEventListener('input', e => {
+            if(e.target.classList.contains('bullet-text')) {
+                const blockDiv = e.target.closest('.bullet-block');
+                const pIdx = parseInt(e.target.closest('.bujo-list').dataset.idx);
+                pagesData[pIdx].find(b => b.id === blockDiv.dataset.id).text = e.target.textContent;
+                save();
             }
-            closeMenus();
-        }
+        });
 
-        function showActionMenu(blockId, targetDiv) {
-            closeMenus();
-            const menu = document.createElement('div');
-            menu.className = 'action-menu';
-            menu.innerHTML = `
-                <button onclick="setStatus('${blockId}', 'completed')">✕</button>
-                <button onclick="setStatus('${blockId}', 'migrated')">></button>
-                <button onclick="setStatus('${blockId}', 'scheduled')"><</button>
-                <button onclick="deleteBlock('${blockId}')">🗑️</button>
-            `;
-            targetDiv.appendChild(menu);
-        }
+        // 2. Clicks (Status Cycle) 🔄
+        document.addEventListener('click', e => {
+            if(e.target.closest('.bullet-control')) {
+                const pIdx = parseInt(e.target.closest('.bujo-list').dataset.idx);
+                const block = pagesData[pIdx].find(b => b.id === e.target.closest('.bullet-block').dataset.id);
+                if(block.type === 'task') {
+                    block.status = CYCLE[(CYCLE.indexOf(block.status) + 1) % 4];
+                    save(); renderPage(pIdx);
+                }
+            }
+        });
 
-        function closeMenus() { document.querySelectorAll('.action-menu').forEach(m => m.remove()); }
+        // 3. Keyboard Shortcuts & Navigation ⌨️
+        document.addEventListener('keydown', e => {
+            const isEditing = e.target.classList.contains('bullet-text');
 
-        function handleInput(e, id) {
-            const block = blocks.find(b => b.id === id);
-            block.text = e.target.textContent;
-            save();
-        }
+            // 📖 Page Nav (Raw arrows if not editing, Alt+Arrows if editing)
+            if (!isEditing && e.key === 'ArrowLeft') { changePage(-1); return; }
+            if (!isEditing && e.key === 'ArrowRight') { changePage(1); return; }
+            if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); changePage(-1); return; }
+            if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); changePage(1); return; }
 
-        function handleKeydown(e, id) {
-            const index = blocks.findIndex(b => b.id === id);
-            const block = blocks[index];
+            if (!isEditing) return;
 
-            // ⚡ Symbol-first Instant Typing
-            if (block.text === '' && e.key.length === 1 && INSTANT_KEYS[e.key]) {
-                e.preventDefault();
-                block.type = INSTANT_KEYS[e.key];
-                block.status = 'open';
-                updateBlockDOM(block);
-                save(); return;
+            const blockDiv = e.target.closest('.bullet-block');
+            const pIdx = parseInt(e.target.closest('.bujo-list').dataset.idx);
+            const blockId = blockDiv.dataset.id;
+            const pageList = pagesData[pIdx];
+            const bIdx = pageList.findIndex(b => b.id === blockId);
+            const block = pageList[bIdx];
+            const caret = getCaretPos(e.target);
+
+            // ⚡ Instant Symbols
+            if (block.text === '' && e.key.length === 1 && INSTANT[e.key]) {
+                e.preventDefault(); block.type = INSTANT[e.key]; block.status = 'open';
+                save(); renderPage(pIdx); focusBlock(blockId); return;
             }
 
-            // 🌟 Indentation
+            // 🌟 Indent (Tab / Shift+Tab)
             if (e.key === 'Tab') {
                 e.preventDefault();
-                block.depth = e.shiftKey ? Math.max(0, block.depth - 1) : Math.min(4, block.depth + 1);
-                updateBlockDOM(block); save(); return;
+                block.depth = Math.max(0, Math.min(4, block.depth + (e.shiftKey ? -1 : 1)));
+                save(); renderPage(pIdx); focusBlock(blockId); return;
             }
 
-            // ✂️ Text Split & Smart Continuation
+            // ✂️ Split Text (Enter)
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                
-                // Get exact cursor split location
-                let caretOffset = 0;
-                const sel = window.getSelection();
-                if (sel.rangeCount > 0) {
-                    const range = sel.getRangeAt(0);
-                    const preCaretRange = range.cloneRange();
-                    preCaretRange.selectNodeContents(e.target);
-                    preCaretRange.setEnd(range.endContainer, range.endOffset);
-                    caretOffset = preCaretRange.toString().length;
-                }
-                
-                const fullText = e.target.textContent;
-                const beforeText = fullText.slice(0, caretOffset);
-                const afterText = fullText.slice(caretOffset);
-                
-                // Update current block
-                block.text = beforeText;
-                e.target.textContent = beforeText;
-                updateBlockDOM(block);
-                
-                // Create & insert new split block
-                const newBlock = createBlock(afterText, block.depth, block.type);
-                newBlock.status = block.status; // Preserve status
-                blocks.splice(index + 1, 0, newBlock);
-                save(); render();
-                
-                // Focus start of new block
-                const nextEl = document.querySelector(`[data-id="${newBlock.id}"] .bullet-text`);
-                nextEl.focus();
-                setCursorToStart(nextEl);
-                return;
-            } 
-            
+                const txt = e.target.textContent;
+                block.text = txt.slice(0, caret);
+                const newBlock = createBlock(txt.slice(caret), block.depth, block.type);
+                newBlock.status = block.status;
+                pageList.splice(bIdx + 1, 0, newBlock);
+                save(); renderPage(pIdx); focusBlock(newBlock.id, true); return;
+            }
+
             // 🔙 Backspace outdent / delete
-            else if (e.key === 'Backspace' && window.getSelection().anchorOffset === 0) {
+            if (e.key === 'Backspace' && caret === 0) {
                 if (block.depth > 0) {
-                    e.preventDefault();
-                    block.depth--;
-                    updateBlockDOM(block); save(); return;
+                    e.preventDefault(); block.depth--; 
+                    save(); renderPage(pIdx); focusBlock(blockId); return;
                 }
-                
-                if (block.text === '') {
-                    e.preventDefault();
-                    if (blocks.length > 1) {
-                        blocks.splice(index, 1); save(); render();
-                        const prevBlock = blocks[index - 1] || blocks[0];
-                        const prevEl = document.querySelector(`[data-id="${prevBlock.id}"] .bullet-text`);
-                        prevEl.focus(); setCursorToEnd(prevEl);
+                if (block.text === '' && pageList.length > 1) {
+                    e.preventDefault(); pageList.splice(bIdx, 1);
+                    save(); renderPage(pIdx); 
+                    focusBlock(pageList[Math.max(0, bIdx - 1)].id, false); return;
+                }
+            }
+
+            // ⬆️⬇️ Up/Down Navigation & Reorder
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                e.preventDefault();
+                const dir = e.key === 'ArrowUp' ? -1 : 1;
+                if (bIdx + dir >= 0 && bIdx + dir < pageList.length) {
+                    if (e.altKey) { // Move block up/down
+                        [pageList[bIdx], pageList[bIdx+dir]] = [pageList[bIdx+dir], pageList[bIdx]];
+                        save(); renderPage(pIdx); focusBlock(blockId);
+                    } else { // Just move cursor
+                        focusBlock(pageList[bIdx+dir].id);
                     }
                 }
             }
-
-            // ⬆️⬇️ Keyboard-first movement & reordering
-            if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                if (e.altKey && index > 0) {
-                    [blocks[index-1], blocks[index]] = [blocks[index], blocks[index-1]];
-                    save(); render();
-                    setCursorToEnd(document.querySelector(`[data-id="${block.id}"] .bullet-text`));
-                } else if (!e.altKey && index > 0) {
-                    setCursorToEnd(document.querySelector(`[data-id="${blocks[index-1].id}"] .bullet-text`));
-                }
-            } else if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                if (e.altKey && index < blocks.length - 1) {
-                    [blocks[index], blocks[index+1]] = [blocks[index+1], blocks[index]];
-                    save(); render();
-                    setCursorToEnd(document.querySelector(`[data-id="${block.id}"] .bullet-text`));
-                } else if (!e.altKey && index < blocks.length - 1) {
-                    setCursorToEnd(document.querySelector(`[data-id="${blocks[index+1].id}"] .bullet-text`));
-                }
-            }
-        }
-
-        function setCursorToEnd(el) {
-            const range = document.createRange();
-            const sel = window.getSelection();
-            range.selectNodeContents(el);
-            range.collapse(false);
-            sel.removeAllRanges(); sel.addRange(range);
-            el.focus();
-        }
-
-        function setCursorToStart(el) {
-            const range = document.createRange();
-            const sel = window.getSelection();
-            range.selectNodeContents(el);
-            range.collapse(true);
-            sel.removeAllRanges(); sel.addRange(range);
-            el.focus();
-        }
-
-        /**
-         * ✋ GLOBAL DRAG AND DROP & TACTILE INDENTATION
-         */
-        document.addEventListener('drag', e => {
-            if (!draggedId || e.clientX === 0) return;
-            
-            // Calculate horizontal indent threshold
-            const deltaX = e.clientX - dragStartX;
-            const depthChange = Math.round(deltaX / 28);
-            let newDepth = Math.max(0, Math.min(4, dragInitialDepth + depthChange));
-            
-            const draggedEl = document.querySelector(`[data-id="${draggedId}"]`);
-            if (draggedEl) {
-                draggedEl.style.marginLeft = `${newDepth * 28}px`;
-                draggedEl.dataset.tempDepth = newDepth;
-            }
         });
 
-        listEl.addEventListener('dragover', e => {
-            e.preventDefault();
-            const targetEl = e.target.closest('.bullet-block');
-            if (targetEl && targetEl.dataset.id !== draggedId) {
-                const draggedEl = document.querySelector(`[data-id="${draggedId}"]`);
-                const blocksArray = Array.from(listEl.querySelectorAll('.bullet-block'));
-                const draggedIndex = blocksArray.indexOf(draggedEl);
-                const targetIndex = blocksArray.indexOf(targetEl);
-
-                if (draggedIndex < targetIndex) targetEl.after(draggedEl);
-                else targetEl.before(draggedEl);
+        // 4. Native Drag & Drop ✋
+        let draggedId = null;
+        document.addEventListener('dragstart', e => {
+            if(e.target.classList.contains('bullet-control')) {
+                draggedId = e.target.closest('.bullet-block').dataset.id;
+                e.dataTransfer.effectAllowed = 'move';
             }
         });
-
-        document.addEventListener('dragend', e => {
-            const draggedEl = document.querySelector(`[data-id="${draggedId}"]`);
-            if (draggedEl) {
-                draggedEl.classList.remove('is-dragging');
-                
-                // Apply the new depth if modified
-                if (draggedEl.dataset.tempDepth !== undefined) {
-                    const block = blocks.find(b => b.id === draggedId);
-                    if(block) block.depth = parseInt(draggedEl.dataset.tempDepth);
-                    delete draggedEl.dataset.tempDepth;
-                }
-            }
-
-            // Save new vertical order
-            const newOrderIds = Array.from(listEl.querySelectorAll('.bullet-block')).map(el => el.dataset.id);
-            blocks.sort((a, b) => newOrderIds.indexOf(a.id) - newOrderIds.indexOf(b.id));
-            
-            save();
-            render();
-            draggedId = null;
-        });
-
-        /**
-         * 📖 PAGE MEMORY
-         */
-        function saveMemory() {
-            const active = document.activeElement;
-            const blockId = active?.closest('.bullet-block')?.dataset?.id;
-            const memory = { scroll: window.scrollY, activeId: blockId };
-            localStorage.setItem(MEMORY_KEY, JSON.stringify(memory));
-        }
-
-        window.addEventListener('beforeunload', saveMemory);
-
-        // 🚀 Initialize and Restore State
-        render();
         
-        const memory = JSON.parse(localStorage.getItem(MEMORY_KEY));
-        if (memory) {
-            setTimeout(() => {
-                window.scrollTo(0, memory.scroll);
-                if (memory.activeId) {
-                    const el = document.querySelector(`[data-id="${memory.activeId}"] .bullet-text`);
-                    if (el) setCursorToEnd(el);
-                }
-            }, 50);
-        }
+        document.addEventListener('dragover', e => {
+            e.preventDefault();
+            const target = e.target.closest('.bullet-block');
+            if(target && target.dataset.id !== draggedId && draggedId) {
+                const list = target.parentNode;
+                const draggedEl = document.querySelector(`[data-id="${draggedId}"]`);
+                const rect = target.getBoundingClientRect();
+                if (e.clientY > rect.top + rect.height / 2) list.insertBefore(draggedEl, target.nextSibling);
+                else list.insertBefore(draggedEl, target);
+            }
+        });
+        
+        document.addEventListener('dragend', e => {
+            if(draggedId) {
+                const pIdx = parseInt(document.querySelector(`[data-id="${draggedId}"]`).closest('.bujo-list').dataset.idx);
+                const list = document.querySelector(`.bujo-list[data-idx="${pIdx}"]`);
+                const newOrderIds = Array.from(list.children).map(el => el.dataset.id);
+                pagesData[pIdx].sort((a, b) => newOrderIds.indexOf(a.id) - newOrderIds.indexOf(b.id));
+                save(); renderPage(pIdx); draggedId = null;
+            }
+        });
 
+        // 🚀 Initialize
+        renderApp();
     </script>
 </body>
 </html>
