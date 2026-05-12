@@ -18,7 +18,6 @@
         .bullet-handle:active { cursor: grabbing; }
         .dragging { opacity: 0.3; }
         
-        /* Word wrapping and hyphenation rules */
         .bullet-text { 
             cursor: text; 
             user-select: text; 
@@ -31,21 +30,58 @@
 <body class="text-zinc-800">
 
     <div id="app" class="flex transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] w-full h-screen will-change-transform">
-    </div>
+        </div>
 
     <div id="page-indicator" class="fixed bottom-2 left-1/2 -translate-x-1/2 flex gap-3 z-50 p-4 cursor-grab active:cursor-grabbing touch-none"></div>
     
     <script>
         // ==========================================
-        // 🧠 CONFIG & STATE
+        // 💾 PERSISTENCE LAYER (Desktop FileSystem Stub)
+        // ==========================================
+        // Note: Replace these stubs with actual IPC calls (e.g., window.electronAPI.writeFile)
+        // ==========================================
+        // 💾 PERSISTENCE LAYER (Real Electron IPC)
+        // ==========================================
+        const FileSystemAPI = {
+            async readJson(path) {
+                // Calls the preload script, which calls main.js
+                return await window.electronAPI.readJson(path); 
+            },
+            async writeJsonAtomic(path, data) {
+                // Safely triggers the file write + rename in Node
+                return await window.electronAPI.writeJsonAtomic(path, data);
+            }
+        };
+
+        const StorageManager = {
+            async loadNotebookMeta() {
+                const meta = await FileSystemAPI.readJson('meta.json');
+                return meta || { pageOrder: [] };
+            },
+            async saveNotebookMeta(pageOrder) {
+                await FileSystemAPI.writeJsonAtomic('meta.json', { pageOrder });
+            },
+            async loadPage(pageId) {
+                const data = await FileSystemAPI.readJson(`pages/${pageId}.json`);
+                return data || [createBlock()]; // Return empty page if new
+            },
+            async savePage(pageId, pageData) {
+                await FileSystemAPI.writeJsonAtomic(`pages/${pageId}.json`, pageData);
+            }
+        };
+
+        // ==========================================
+        // 🧠 CONFIG & IN-MEMORY STATE
         // ==========================================
         const BULLETS = { task: '•', completed: '✕', migrated: '>', scheduled: '<', event: '○', note: '-' };
         const CYCLE = ['task', 'completed', 'migrated', 'scheduled', 'event', 'note'];
         const MD_MAP = {'* ': 'task', 'x ': 'completed', '> ': 'migrated', '< ': 'scheduled', 'o ': 'event', '- ': 'note', '# ': 'h1', '## ': 'h2', '### ': 'h3', '#### ': 'h4', '##### ': 'h5', '###### ': 'h6'};
 
-        let pagesData = JSON.parse(localStorage.getItem('bujo_pages_spread')) || [[createBlock()], [createBlock()]];
-        let storedPage = parseInt(localStorage.getItem('bujo_last_page'));
-        let currentP = isNaN(storedPage) ? 0 : storedPage;
+        // App State
+        let metaData = { pageOrder: [] };
+        let pagesData = []; // Array of arrays (each sub-array is a page's blocks)
+        let currentP = 0;   // Current active page index
+        let saveTimeout = null;
 
         // ==========================================
         // 🛠️ UTILS & DATA MANAGEMENT
@@ -53,39 +89,74 @@
         function createBlock(text = '', depth = 0, type = 'text') { 
             return { id: crypto.randomUUID(), type, text, depth }; 
         }
-        
-        function cleanEmptySpreads() {
-            let currentPair = Math.floor(currentP / 2);
-            let cleaned = false;
+
+        async function initApp() {
+            // 1. Load Meta
+            metaData = await StorageManager.loadNotebookMeta();
             
-            // Iterate backwards by pairs to safely remove elements without messing up the loop index
+            // 2. Ensure at least one spread (2 pages) exists
+            if (metaData.pageOrder.length === 0) {
+                const p1Id = `page-${crypto.randomUUID()}`;
+                const p2Id = `page-${crypto.randomUUID()}`;
+                metaData.pageOrder.push(p1Id, p2Id);
+                await StorageManager.saveNotebookMeta(metaData.pageOrder);
+            }
+
+            // 3. Load all pages into memory
+            pagesData = await Promise.all(
+                metaData.pageOrder.map(id => StorageManager.loadPage(id))
+            );
+
+            renderApp();
+        }
+        
+        async function cleanEmptySpreads() {
+            let currentPair = Math.floor(currentP / 2);
+            let layoutChanged = false;
+            
             for (let i = pagesData.length - 2; i >= 0; i -= 2) {
-                // Keep the current active spread, and ensure at least 1 spread remains total
                 if (Math.floor(i / 2) === currentPair || pagesData.length <= 2) continue;
 
                 const p1Empty = pagesData[i].every(b => b.text.trim() === '' && b.type === 'text');
                 const p2Empty = (pagesData[i+1] || []).every(b => b.text.trim() === '' && b.type === 'text');
 
                 if (p1Empty && p2Empty) {
+                    // Note: In a real app, you might want to move these to a /trash directory
                     pagesData.splice(i, 2);
-                    // Adjust current page if we deleted a spread before the active one
+                    metaData.pageOrder.splice(i, 2);
+                    
                     if (i < currentP) currentP -= 2; 
-                    cleaned = true;
+                    layoutChanged = true;
                 }
             }
-            return cleaned;
+
+            if (layoutChanged) {
+                await StorageManager.saveNotebookMeta(metaData.pageOrder);
+            }
+            return layoutChanged;
         }
 
-        function save(forceRender = false) { 
-            const layoutChanged = cleanEmptySpreads();
-            localStorage.setItem('bujo_pages_spread', JSON.stringify(pagesData)); 
-            localStorage.setItem('bujo_last_page', currentP);
-            
-            if (layoutChanged || forceRender) renderApp();
-            else renderIndicator(); 
+        // Debounced Async Save
+        async function save(forceRender = false) { 
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(async () => {
+                const layoutChanged = await cleanEmptySpreads();
+                
+                // Save current visible pages
+                const activePair = Math.floor(currentP / 2) * 2;
+                if(metaData.pageOrder[activePair]) {
+                    await StorageManager.savePage(metaData.pageOrder[activePair], pagesData[activePair]);
+                }
+                if(metaData.pageOrder[activePair + 1]) {
+                    await StorageManager.savePage(metaData.pageOrder[activePair + 1], pagesData[activePair + 1]);
+                }
+                
+                if (layoutChanged || forceRender) renderApp();
+                else renderIndicator(); 
+            }, 500); // 500ms debounce
         }
 
-        function getCaretPos(el) {
+        function getCaretPos(el) { /* ... standard caret logic ... */ 
             const sel = window.getSelection();
             if (sel.rangeCount) {
                 const r = sel.getRangeAt(0).cloneRange();
@@ -113,8 +184,13 @@
         // 🎨 RENDERING
         // ==========================================
         function renderApp() {
-            // Ensure even number of pages
-            if (pagesData.length % 2 !== 0) pagesData.push([createBlock()]);
+            // Ensure even number of pages in memory
+            if (pagesData.length % 2 !== 0) {
+                const newId = `page-${crypto.randomUUID()}`;
+                metaData.pageOrder.push(newId);
+                pagesData.push([createBlock()]);
+                StorageManager.saveNotebookMeta(metaData.pageOrder);
+            }
 
             const app = document.getElementById('app');
             app.innerHTML = pagesData.map((p, i) => `
@@ -136,19 +212,12 @@
             
             list.innerHTML = pagesData[pIdx].map(b => {
                 let textClass = "flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ";
-                
-                // Typography styles
                 const styles = {
-                    'h1': "text-4xl font-bold mt-6 mb-2 ",
-                    'h2': "text-3xl font-bold mt-5 mb-2 ",
-                    'h3': "text-2xl font-bold mt-4 mb-1 ",
-                    'h4': "text-xl font-semibold mt-3 mb-1 ",
-                    'h5': "text-lg font-semibold mt-2 mb-1 ",
-                    'h6': "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500 "
+                    'h1': "text-4xl font-bold mt-6 mb-2 ", 'h2': "text-3xl font-bold mt-5 mb-2 ", 'h3': "text-2xl font-bold mt-4 mb-1 ",
+                    'h4': "text-xl font-semibold mt-3 mb-1 ", 'h5': "text-lg font-semibold mt-2 mb-1 ", 'h6': "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500 "
                 };
                 textClass += styles[b.type] || "text-[1.05rem] leading-relaxed ";
 
-                // State styles
                 if (b.type === 'completed') textClass += "line-through text-zinc-400 opacity-60";
                 else if (['migrated', 'scheduled'].includes(b.type)) textClass += "italic text-zinc-500";
 
@@ -189,11 +258,17 @@
             updateView(); save();
         }
 
-        function changePage(dir) {
+        async function changePage(dir) {
             const nextP = currentP + dir * 2;
             if (nextP < 0) return;
             if (nextP >= pagesData.length) {
+                // Generate new IDs and add to order
+                const id1 = `page-${crypto.randomUUID()}`;
+                const id2 = `page-${crypto.randomUUID()}`;
+                metaData.pageOrder.push(id1, id2);
                 pagesData.push([createBlock()], [createBlock()]);
+                
+                await StorageManager.saveNotebookMeta(metaData.pageOrder);
                 renderApp();
             }
             currentP = nextP;
@@ -224,8 +299,7 @@
                     return;
                 }
             }
-            // Save without triggering a full re-render on every keystroke
-            localStorage.setItem('bujo_pages_spread', JSON.stringify(pagesData)); 
+            save(); 
         });
 
         document.addEventListener('keydown', e => {
@@ -248,7 +322,6 @@
             if (e.altKey && e.key === 'Enter') { e.preventDefault(); changePage(1); return; }
             if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); cycleType(block, pIdx); return; }
 
-            // Enter : New Block
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 const caret = getCaretPos(e.target);
@@ -261,7 +334,6 @@
                 return;
             }
 
-            // Tab : Indent
             if (e.key === 'Tab') {
                 e.preventDefault();
                 block.depth = Math.max(0, Math.min(4, block.depth + (e.shiftKey ? -1 : 1)));
@@ -269,7 +341,6 @@
                 return;
             }
             
-            // Backspace : Remove / Merge
             if (e.key === 'Backspace' && getCaretPos(e.target) === 0) {
                 if (block.type !== 'text') {
                     e.preventDefault(); block.type = 'text'; save(); renderPage(pIdx); focusBlock(block.id);
@@ -295,7 +366,6 @@
                 }
             }
 
-            // Up/Down Arrows : Navigate
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 const sel = window.getSelection();
                 if (!sel.rangeCount) return;
@@ -391,8 +461,8 @@
             save();
         });
 
-        // Initialization
-        renderApp();
+        // 🚀 Kickoff
+        initApp();
     </script>
 </body>
 </html>
