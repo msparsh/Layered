@@ -43,30 +43,46 @@
         // 💾 PERSISTENCE LAYER (Real Electron IPC)
         // ==========================================
         const FileSystemAPI = {
-            async readJson(path) {
-                // Calls the preload script, which calls main.js
-                return await window.electronAPI.readJson(path); 
-            },
-            async writeJsonAtomic(path, data) {
-                // Safely triggers the file write + rename in Node
-                return await window.electronAPI.writeJsonAtomic(path, data);
-            }
+            async readJson(path) { return await window.electronAPI.readJson(path); },
+            async writeJsonAtomic(path, data) { return await window.electronAPI.writeJsonAtomic(path, data); },
+            async trashJson(path) { return await window.electronAPI.trashJson(path); }
         };
 
         const StorageManager = {
             async loadNotebookMeta() {
                 const meta = await FileSystemAPI.readJson('meta.json');
-                return meta || { pageOrder: [] };
+                
+                // 🚨 FIX: Gracefully migrate old data schemas if they exist!
+                if (meta) {
+                    if (meta.pageOrder && !meta.spreadOrder) {
+                        console.log("🔄 Migrating old meta.json to version 1...");
+                        meta.spreadOrder = meta.pageOrder;
+                        delete meta.pageOrder;
+                    }
+                    
+                    // Ensure all required keys exist to prevent undefined crashes
+                    meta.version = meta.version || 1;
+                    meta.currentSpread = meta.currentSpread || 0;
+                    meta.spreadOrder = meta.spreadOrder || [];
+                    
+                    return meta;
+                }
+                
+                // Fresh start
+                return { version: 1, currentSpread: 0, spreadOrder: [] };
             },
-            async saveNotebookMeta(pageOrder) {
-                await FileSystemAPI.writeJsonAtomic('meta.json', { pageOrder });
+            async saveNotebookMeta(metaData) {
+                await FileSystemAPI.writeJsonAtomic('meta.json', metaData);
             },
             async loadPage(pageId) {
                 const data = await FileSystemAPI.readJson(`pages/${pageId}.json`);
-                return data || [createBlock()]; // Return empty page if new
+                return data || [createBlock()]; 
             },
             async savePage(pageId, pageData) {
                 await FileSystemAPI.writeJsonAtomic(`pages/${pageId}.json`, pageData);
+            },
+            async trashPage(pageId) {
+                await FileSystemAPI.trashJson(`pages/${pageId}.json`);
             }
         };
 
@@ -78,7 +94,7 @@
         const MD_MAP = {'* ': 'task', 'x ': 'completed', '> ': 'migrated', '< ': 'scheduled', 'o ': 'event', '- ': 'note', '# ': 'h1', '## ': 'h2', '### ': 'h3', '#### ': 'h4', '##### ': 'h5', '###### ': 'h6'};
 
         // App State
-        let metaData = { pageOrder: [] };
+        let metaData = { version: 1, currentSpread: 0, spreadOrder: [] };
         let pagesData = []; // Array of arrays (each sub-array is a page's blocks)
         let currentP = 0;   // Current active page index
         let saveTimeout = null;
@@ -91,22 +107,19 @@
         }
 
         async function initApp() {
-            // 1. Load Meta
             metaData = await StorageManager.loadNotebookMeta();
             
-            // 2. Ensure at least one spread (2 pages) exists
-            if (metaData.pageOrder.length === 0) {
-                const p1Id = `page-${crypto.randomUUID()}`;
-                const p2Id = `page-${crypto.randomUUID()}`;
-                metaData.pageOrder.push(p1Id, p2Id);
-                await StorageManager.saveNotebookMeta(metaData.pageOrder);
+            if (metaData.spreadOrder.length === 0) {
+                metaData.spreadOrder.push(`spread-${crypto.randomUUID()}`, `spread-${crypto.randomUUID()}`);
+                await StorageManager.saveNotebookMeta(metaData);
             }
 
-            // 3. Load all pages into memory
             pagesData = await Promise.all(
-                metaData.pageOrder.map(id => StorageManager.loadPage(id))
+                metaData.spreadOrder.map(id => StorageManager.loadPage(id))
             );
 
+            // Restore last viewed spread!
+            currentP = metaData.currentSpread || 0;
             renderApp();
         }
         
@@ -121,9 +134,12 @@
                 const p2Empty = (pagesData[i+1] || []).every(b => b.text.trim() === '' && b.type === 'text');
 
                 if (p1Empty && p2Empty) {
-                    // Note: In a real app, you might want to move these to a /trash directory
+                    // 🗑️ Move the orphaned files to the trash!
+                    await StorageManager.trashPage(metaData.spreadOrder[i]);
+                    await StorageManager.trashPage(metaData.spreadOrder[i+1]);
+
                     pagesData.splice(i, 2);
-                    metaData.pageOrder.splice(i, 2);
+                    metaData.spreadOrder.splice(i, 2);
                     
                     if (i < currentP) currentP -= 2; 
                     layoutChanged = true;
@@ -131,7 +147,8 @@
             }
 
             if (layoutChanged) {
-                await StorageManager.saveNotebookMeta(metaData.pageOrder);
+                metaData.currentSpread = currentP;
+                await StorageManager.saveNotebookMeta(metaData);
             }
             return layoutChanged;
         }
@@ -142,18 +159,21 @@
             saveTimeout = setTimeout(async () => {
                 const layoutChanged = await cleanEmptySpreads();
                 
-                // Save current visible pages
                 const activePair = Math.floor(currentP / 2) * 2;
-                if(metaData.pageOrder[activePair]) {
-                    await StorageManager.savePage(metaData.pageOrder[activePair], pagesData[activePair]);
+                if(metaData.spreadOrder[activePair]) {
+                    await StorageManager.savePage(metaData.spreadOrder[activePair], pagesData[activePair]);
                 }
-                if(metaData.pageOrder[activePair + 1]) {
-                    await StorageManager.savePage(metaData.pageOrder[activePair + 1], pagesData[activePair + 1]);
+                if(metaData.spreadOrder[activePair + 1]) {
+                    await StorageManager.savePage(metaData.spreadOrder[activePair + 1], pagesData[activePair + 1]);
                 }
                 
+                // Track the current spread in the new meta object!
+                metaData.currentSpread = currentP;
+                await StorageManager.saveNotebookMeta(metaData);
+
                 if (layoutChanged || forceRender) renderApp();
                 else renderIndicator(); 
-            }, 500); // 500ms debounce
+            }, 500); 
         }
 
         function getCaretPos(el) { /* ... standard caret logic ... */ 
