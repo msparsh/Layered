@@ -6,52 +6,68 @@
     <title>Minimalist Bujo - Spread 📖</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* ✨ Essential overrides */
         body { overflow: hidden; background-color: #fafafa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         [contenteditable]:empty::before { content: "\FEFF"; }
         .bullet-block { animation: slideIn 0.15s ease-out forwards; }
         @keyframes slideIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
         ::-webkit-scrollbar { display: none; }
+        
+        /* ✨ Drag, Selection & Text Wrap Logic */
+        .bullet-block { cursor: default; }
+        .bullet-handle { cursor: grab; user-select: none; }
+        .bullet-handle:active { cursor: grabbing; }
+        .dragging { opacity: 0.3; }
+        
+        /* Word wrapping and hyphenation rules */
+        .bullet-text { 
+            cursor: text; 
+            user-select: text; 
+            word-break: break-word; 
+            -webkit-hyphens: auto; 
+            hyphens: auto; 
+        }
+
+
     </style>
 </head>
-<body class="text-zinc-800 selection:bg-zinc-200">
+<body class="text-zinc-800">
 
     <div id="app" class="flex transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] w-full h-screen will-change-transform">
-        </div>
+    </div>
 
-    <div id="page-indicator" class="fixed bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-50"></div>
-
+    <div id="page-indicator" class="fixed bottom-2 left-1/2 -translate-x-1/2 flex gap-3 z-50 p-4 cursor-grab active:cursor-grabbing touch-none"></div>
     <script>
-        /**
-         * 🛠️ CORE CONFIGURATION & STATE 
-         */
-        const SYMBOLS = { task: { open: '•', completed: '✕', migrated: '>', scheduled: '<' }, event: { open: '○' }, note: { open: '-' }, priority: { open: '!' }, question: { open: '?' } };
-        const INSTANT = { '.': 'task', 'o': 'event', '-': 'note', '!': 'priority', '?': 'question' };
-        const CYCLE = ['open', 'completed', 'migrated', 'scheduled'];
+        const BULLETS = { task: '•', completed: '✕', migrated: '>', scheduled: '<', event: '○', note: '-' };
+        const CYCLE = ['task', 'completed', 'migrated', 'scheduled', 'event', 'note'];
 
+        // 🧠 State Management with Last Page Memory
         let pagesData = JSON.parse(localStorage.getItem('bujo_pages_spread')) || [[createBlock()], [createBlock()]];
-        let currentP = 0; // Tracks the index of the left-hand page 📖
+        let storedPage = parseInt(localStorage.getItem('bujo_last_page'));
+        let currentP = isNaN(storedPage) ? 0 : storedPage;
 
-        function createBlock(text = '', depth = 0, type = 'task') { 
-            return { id: crypto.randomUUID(), type, status: 'open', text, depth }; 
+        function createBlock(text = '', depth = 0, type = 'text') { 
+            return { id: crypto.randomUUID(), type, text, depth }; 
         }
         
         function save() { 
             localStorage.setItem('bujo_pages_spread', JSON.stringify(pagesData)); 
+            localStorage.setItem('bujo_last_page', currentP);
             renderIndicator(); 
         }
 
         /**
-         * 🎨 DOM RENDERING 
+         * 🎨 RENDERING
          */
         function renderApp() {
-            // Ensure we always have an even number of pages for the spread! 👯‍♀️
             if (pagesData.length % 2 !== 0) pagesData.push([createBlock()]);
 
             const app = document.getElementById('app');
             app.innerHTML = pagesData.map((p, i) => `
-                <div class="w-[50vw] h-screen flex-shrink-0 flex justify-center px-10 pt-24 pb-32 overflow-y-auto ${i % 2 === 0 ? 'border-r border-dashed border-zinc-300' : ''}">
-                    <div class="w-full max-w-md bujo-list relative" data-idx="${i}"></div>
+                <div class="w-[50vw] h-screen flex-shrink-0 relative flex justify-center ${i % 2 === 0 ? 'border-r border-dashed border-zinc-300' : ''}">
+                    <div class="w-full h-full overflow-y-auto px-10 pt-24 pb-32 flex justify-center">
+                        <div class="w-full max-w-md bujo-list relative min-h-[50vh]" data-idx="${i}"></div>
+                    </div>
+                    <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">${i + 1}</div>
                 </div>
             `).join('');
             
@@ -64,14 +80,29 @@
             if(!list) return;
             
             list.innerHTML = pagesData[pIdx].map(b => {
-                let textClass = "flex-1 outline-none text-[1.05rem] leading-relaxed bullet-text transition-all duration-300 ";
-                if (b.status === 'completed') textClass += "line-through text-zinc-400 opacity-60";
-                else if (['migrated', 'scheduled'].includes(b.status)) textClass += "italic text-zinc-500";
+                let textClass = "flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ";
+                
+                if (b.type === 'h1') textClass += "text-4xl font-bold mt-6 mb-2 ";
+                else if (b.type === 'h2') textClass += "text-3xl font-bold mt-5 mb-2 ";
+                else if (b.type === 'h3') textClass += "text-2xl font-bold mt-4 mb-1 ";
+                else if (b.type === 'h4') textClass += "text-xl font-semibold mt-3 mb-1 ";
+                else if (b.type === 'h5') textClass += "text-lg font-semibold mt-2 mb-1 ";
+                else if (b.type === 'h6') textClass += "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500 ";
+                else textClass += "text-[1.05rem] leading-relaxed ";
+
+                if (b.type === 'completed') textClass += "line-through text-zinc-400 opacity-60";
+                else if (['migrated', 'scheduled'].includes(b.type)) textClass += "italic text-zinc-500";
+
+                const isBullet = CYCLE.includes(b.type);
+                const symbol = isBullet ? BULLETS[b.type] : ''; 
 
                 return `
-                <div class="relative flex items-start mb-3 bullet-block group" data-id="${b.id}" style="margin-left: ${b.depth * 28}px">
-                    <div class="absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center cursor-grab opacity-40 group-hover:opacity-100 group-hover:text-black text-zinc-500 font-bold transition-transform active:scale-75 bullet-control" draggable="true">
-                        ${SYMBOLS[b.type][b.status] || SYMBOLS[b.type].open}
+                <div class="relative flex items-start mb-2 bullet-block group" data-id="${b.id}" style="margin-left: ${b.depth * 28}px">
+                    <div class="absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isBullet ? 'opacity-40 text-zinc-500' : 'opacity-0 text-zinc-300'} group-hover:opacity-100 hover:!text-black font-bold transition-all" 
+                         onmousedown="this.parentElement.setAttribute('draggable', 'true')" 
+                         onmouseup="this.parentElement.setAttribute('draggable', 'false')"
+                         onmouseleave="this.parentElement.setAttribute('draggable', 'false')">
+                        ${symbol || '::'} 
                     </div>
                     <div class="${textClass}" contenteditable="true" spellcheck="false">${b.text}</div>
                 </div>`;
@@ -79,8 +110,8 @@
         }
 
         function updateView() {
-            // Move by 50vw per page index! 📏
             document.getElementById('app').style.transform = `translateX(-${currentP * 50}vw)`;
+            localStorage.setItem('bujo_last_page', currentP);
             renderIndicator();
         }
 
@@ -88,24 +119,32 @@
             const pairCount = Math.ceil(pagesData.length / 2);
             const activePair = Math.floor(currentP / 2);
             document.getElementById('page-indicator').innerHTML = Array.from({length: pairCount}).map((_, i) => 
-                `<span class="h-2 rounded-full transition-all duration-300 ${i === activePair ? 'w-6 bg-zinc-800' : 'w-2 bg-zinc-300'}"></span>`
+                `<span onclick="jumpToPair(${i})" class="pointer-events-none h-2 rounded-full transition-all duration-300 ${i === activePair ? 'w-6 bg-zinc-800' : 'w-2 bg-zinc-300 hover:bg-zinc-400'}"></span>`
             ).join('');
         }
 
+        function jumpToPair(pairIdx) {
+            currentP = pairIdx * 2;
+            updateView();
+            save();
+        }
+
         function changePage(dir) {
-            currentP += dir * 2; // Jump by 2 pages at a time! 🦘
-            if (currentP < 0) currentP = 0;
-            
-            // Generate new pages if we hit the end! 🪄
-            let added = false;
-            while (currentP + 1 >= pagesData.length) { 
-                pagesData.push([createBlock()]); 
-                added = true;
+            const nextP = currentP + dir * 2;
+            if (nextP < 0) return;
+            if (nextP >= pagesData.length) {
+                pagesData.push([createBlock()], [createBlock()]);
+                renderApp();
             }
-            if (pagesData.length % 2 !== 0) { pagesData.push([createBlock()]); added = true; }
-            
-            if (added) renderApp();
+            currentP = nextP;
             updateView(); save();
+        }
+
+        function cycleType(block, pIdx) {
+            let currentIndex = CYCLE.indexOf(block.type);
+            if (currentIndex === -1) block.type = 'task'; 
+            else block.type = CYCLE[(currentIndex + 1) % CYCLE.length];
+            save(); renderPage(pIdx); focusBlock(block.id);
         }
 
         function focusBlock(id, atStart = false) {
@@ -113,155 +152,234 @@
                 const el = document.querySelector(`[data-id="${id}"] .bullet-text`);
                 if (!el) return;
                 el.focus();
+                const sel = window.getSelection();
                 const range = document.createRange();
                 range.selectNodeContents(el);
                 range.collapse(atStart);
-                const sel = window.getSelection();
                 sel.removeAllRanges(); sel.addRange(range);
             }, 10);
         }
 
         function getCaretPos(el) {
-            let caret = 0;
             const sel = window.getSelection();
             if (sel.rangeCount) {
                 const r = sel.getRangeAt(0).cloneRange();
                 r.selectNodeContents(el);
                 r.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset);
-                caret = r.toString().length;
+                return r.toString().length;
             }
-            return caret;
+            return 0;
         }
 
         /**
-         * 🕹️ EVENT DELEGATION
+         * 🕹️ EVENTS
          */
-        // 1. Inputs ✍️
         document.addEventListener('input', e => {
             if(e.target.classList.contains('bullet-text')) {
-                const blockDiv = e.target.closest('.bullet-block');
                 const pIdx = parseInt(e.target.closest('.bujo-list').dataset.idx);
-                pagesData[pIdx].find(b => b.id === blockDiv.dataset.id).text = e.target.textContent;
+                const block = pagesData[pIdx].find(b => b.id === e.target.closest('.bullet-block').dataset.id);
+                block.text = e.target.textContent;
+
+                const mdMap = {'* ': 'task', 'x ': 'completed', '> ': 'migrated', '< ': 'scheduled', 'o ': 'event', '- ': 'note', '# ': 'h1', '## ': 'h2'};
+                for (const [prefix, type] of Object.entries(mdMap)) {
+                    if (e.target.textContent.startsWith(prefix)) {
+                        block.type = type;
+                        block.text = e.target.textContent.substring(prefix.length);
+                        save(); renderPage(pIdx); focusBlock(block.id, true);
+                        break;
+                    }
+                }
                 save();
             }
         });
 
-        // 2. Clicks (Status Cycle) 🔄
-        document.addEventListener('click', e => {
-            if(e.target.closest('.bullet-control')) {
-                const pIdx = parseInt(e.target.closest('.bujo-list').dataset.idx);
-                const block = pagesData[pIdx].find(b => b.id === e.target.closest('.bullet-block').dataset.id);
-                if(block.type === 'task') {
-                    block.status = CYCLE[(CYCLE.indexOf(block.status) + 1) % 4];
-                    save(); renderPage(pIdx);
-                }
-            }
-        });
-
-        // 3. Keyboard Shortcuts & Navigation ⌨️
         document.addEventListener('keydown', e => {
             const isEditing = e.target.classList.contains('bullet-text');
-
-            // 📖 Page Nav (Raw arrows if not editing, Alt+Arrows if editing)
-            if (!isEditing && e.key === 'ArrowLeft') { changePage(-1); return; }
-            if (!isEditing && e.key === 'ArrowRight') { changePage(1); return; }
-            if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); changePage(-1); return; }
-            if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); changePage(1); return; }
-
-            if (!isEditing) return;
-
-            const blockDiv = e.target.closest('.bullet-block');
-            const pIdx = parseInt(e.target.closest('.bujo-list').dataset.idx);
-            const blockId = blockDiv.dataset.id;
-            const pageList = pagesData[pIdx];
-            const bIdx = pageList.findIndex(b => b.id === blockId);
-            const block = pageList[bIdx];
-            const caret = getCaretPos(e.target);
-
-            // ⚡ Instant Symbols
-            if (block.text === '' && e.key.length === 1 && INSTANT[e.key]) {
-                e.preventDefault(); block.type = INSTANT[e.key]; block.status = 'open';
-                save(); renderPage(pIdx); focusBlock(blockId); return;
+            
+            // 🚪 Global Mode Listeners
+            if (!isEditing) {
+                if (e.key === 'ArrowLeft') { e.preventDefault(); changePage(-1); }
+                if (e.key === 'ArrowRight') { e.preventDefault(); changePage(1); }
+                return;
             }
 
-            // 🌟 Indent (Tab / Shift+Tab)
+            // 🚫 Escape Edit Mode
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                e.target.blur();
+                return;
+            }
+
+            const pIdx = parseInt(e.target.closest('.bujo-list').dataset.idx);
+            const blockDiv = e.target.closest('.bullet-block');
+            const pageList = pagesData[pIdx];
+            const bIdx = pageList.findIndex(b => b.id === blockDiv.dataset.id);
+            const block = pageList[bIdx];
+
+            // ⌨️ Alt + Enter : Next Page
+            if (e.altKey && e.key === 'Enter') {
+                e.preventDefault();
+                changePage(1);
+                return;
+            }
+
+            // ⌨️ Ctrl + Enter : Cycle Type
+            if (e.ctrlKey && e.key === 'Enter') {
+                e.preventDefault();
+                cycleType(block, pIdx);
+                return;
+            }
+
+            // ⌨️ Enter : New Block
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                const caret = getCaretPos(e.target);
+                const txt = e.target.textContent;
+                block.text = txt.slice(0, caret);
+                const newType = block.type.startsWith('h') ? 'text' : block.type;
+                const newBlock = createBlock(txt.slice(caret), block.depth, newType);
+                pageList.splice(bIdx + 1, 0, newBlock);
+                save(); renderPage(pIdx); focusBlock(newBlock.id, true);
+                return;
+            }
+
+            // ⌨️ Tab : Indent
             if (e.key === 'Tab') {
                 e.preventDefault();
                 block.depth = Math.max(0, Math.min(4, block.depth + (e.shiftKey ? -1 : 1)));
-                save(); renderPage(pIdx); focusBlock(blockId); return;
+                save(); renderPage(pIdx); focusBlock(block.id);
+                return;
             }
-
-            // ✂️ Split Text (Enter)
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                const txt = e.target.textContent;
-                block.text = txt.slice(0, caret);
-                const newBlock = createBlock(txt.slice(caret), block.depth, block.type);
-                newBlock.status = block.status;
-                pageList.splice(bIdx + 1, 0, newBlock);
-                save(); renderPage(pIdx); focusBlock(newBlock.id, true); return;
-            }
-
-            // 🔙 Backspace outdent / delete
-            if (e.key === 'Backspace' && caret === 0) {
-                if (block.depth > 0) {
-                    e.preventDefault(); block.depth--; 
-                    save(); renderPage(pIdx); focusBlock(blockId); return;
+            
+            // ⌨️ Backspace : Remove / Merge blocks smoothly
+            if (e.key === 'Backspace' && getCaretPos(e.target) === 0) {
+                if (block.type !== 'text') {
+                    e.preventDefault(); block.type = 'text'; save(); renderPage(pIdx); focusBlock(block.id);
+                } else if (bIdx > 0) {
+                    e.preventDefault();
+                    const prevBlock = pageList[bIdx - 1];
+                    const prevLength = prevBlock.text.length;
+                    prevBlock.text += block.text;
+                    pageList.splice(bIdx, 1);
+                    save(); renderPage(pIdx);
+                    
+                    // Carefully refocus merged node
+                    setTimeout(() => {
+                        const el = document.querySelector(`[data-id="${prevBlock.id}"] .bullet-text`);
+                        if (!el) return;
+                        el.focus();
+                        const sel = window.getSelection();
+                        const range = document.createRange();
+                        if (el.firstChild) {
+                            range.setStart(el.firstChild, prevLength);
+                        } else {
+                            range.setStart(el, 0);
+                        }
+                        range.collapse(true);
+                        sel.removeAllRanges(); sel.addRange(range);
+                    }, 10);
                 }
-                if (block.text === '' && pageList.length > 1) {
-                    e.preventDefault(); pageList.splice(bIdx, 1);
-                    save(); renderPage(pIdx); 
-                    focusBlock(pageList[Math.max(0, bIdx - 1)].id, false); return;
-                }
             }
 
-            // ⬆️⬇️ Up/Down Navigation & Reorder
+            // ⌨️ Up/Down Arrows : Smooth block navigation
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-                e.preventDefault();
-                const dir = e.key === 'ArrowUp' ? -1 : 1;
-                if (bIdx + dir >= 0 && bIdx + dir < pageList.length) {
-                    if (e.altKey) { 
-                        [pageList[bIdx], pageList[bIdx+dir]] = [pageList[bIdx+dir], pageList[bIdx]];
-                        save(); renderPage(pIdx); focusBlock(blockId);
-                    } else { 
-                        focusBlock(pageList[bIdx+dir].id);
-                    }
+                const sel = window.getSelection();
+                if (!sel.rangeCount) return;
+                
+                const range = sel.getRangeAt(0);
+                const rect = range.getBoundingClientRect();
+                const elRect = e.target.getBoundingClientRect();
+                
+                // If cursor is near top of element, allow jump up
+                if (e.key === 'ArrowUp' && (rect.top - elRect.top < 24)) {
+                    const prev = blockDiv.previousElementSibling;
+                    if (prev) { e.preventDefault(); focusBlock(prev.dataset.id, false); }
+                } 
+                // If cursor is near bottom of element, allow jump down
+                else if (e.key === 'ArrowDown' && (elRect.bottom - rect.bottom < 24)) {
+                    const next = blockDiv.nextElementSibling;
+                    if (next) { e.preventDefault(); focusBlock(next.dataset.id, true); }
                 }
             }
         });
 
-        // 4. Native Drag & Drop ✋
+        // ✋ Bullet-Only Drag & Drop
         let draggedId = null;
         document.addEventListener('dragstart', e => {
-            if(e.target.classList.contains('bullet-control')) {
-                draggedId = e.target.closest('.bullet-block').dataset.id;
-                e.dataTransfer.effectAllowed = 'move';
+            const block = e.target.closest('.bullet-block');
+            if(block && block.getAttribute('draggable') === 'true') {
+                draggedId = block.dataset.id;
+                setTimeout(() => block.classList.add('dragging'), 0);
+            } else { 
+                e.preventDefault(); 
             }
         });
-        
+
         document.addEventListener('dragover', e => {
             e.preventDefault();
             const target = e.target.closest('.bullet-block');
-            if(target && target.dataset.id !== draggedId && draggedId) {
-                const list = target.parentNode;
-                const draggedEl = document.querySelector(`[data-id="${draggedId}"]`);
+            if(target && target.dataset.id !== draggedId) {
                 const rect = target.getBoundingClientRect();
-                if (e.clientY > rect.top + rect.height / 2) list.insertBefore(draggedEl, target.nextSibling);
-                else list.insertBefore(draggedEl, target);
-            }
-        });
-        
-        document.addEventListener('dragend', e => {
-            if(draggedId) {
-                const pIdx = parseInt(document.querySelector(`[data-id="${draggedId}"]`).closest('.bujo-list').dataset.idx);
-                const list = document.querySelector(`.bujo-list[data-idx="${pIdx}"]`);
-                const newOrderIds = Array.from(list.children).map(el => el.dataset.id);
-                pagesData[pIdx].sort((a, b) => newOrderIds.indexOf(a.id) - newOrderIds.indexOf(b.id));
-                save(); renderPage(pIdx); draggedId = null;
+                const draggedEl = document.querySelector(`[data-id="${draggedId}"]`);
+                if (e.clientY > rect.top + rect.height / 2) target.parentNode.insertBefore(draggedEl, target.nextSibling);
+                else target.parentNode.insertBefore(draggedEl, target);
             }
         });
 
-        // 🚀 Initialize
+        document.addEventListener('dragend', () => {
+            const el = document.querySelector(`[data-id="${draggedId}"]`);
+            if(el) {
+                el.classList.remove('dragging');
+                el.setAttribute('draggable', 'false'); // Reset after drag
+            }
+            const allBlocks = pagesData.flat();
+            pagesData = pagesData.map((_, i) => {
+                const list = document.querySelector(`.bujo-list[data-idx="${i}"]`);
+                return Array.from(list.children).map(c => allBlocks.find(b => b.id === c.dataset.id));
+            });
+            save(); draggedId = null;
+        });
+
+
+        // 🎚️ Smooth Scrubbing Logic for Classic Dots
+const indicator = document.getElementById('page-indicator');
+let isScrubbing = false;
+
+indicator.addEventListener('pointerdown', e => {
+    isScrubbing = true;
+    document.getElementById('app').style.transitionDuration = '0s'; // ⚡ Snap instantly while dragging
+    indicator.setPointerCapture(e.pointerId);
+    handleScrub(e);
+});
+
+indicator.addEventListener('pointermove', e => {
+    if (!isScrubbing) return;
+    handleScrub(e);
+});
+
+indicator.addEventListener('pointerup', e => {
+    isScrubbing = false;
+    document.getElementById('app').style.transitionDuration = ''; // 🌊 Restore smooth animation
+    indicator.releasePointerCapture(e.pointerId);
+    save();
+});
+
+function handleScrub(e) {
+    const rect = indicator.getBoundingClientRect();
+    const pairCount = Math.ceil(pagesData.length / 2);
+    if (pairCount <= 1) return;
+
+    // Map mouse X position to the correct page index
+    let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+    let index = Math.floor((x / rect.width) * pairCount);
+    index = Math.min(index, pairCount - 1); // Prevent out of bounds
+
+    if (currentP !== index * 2) {
+        currentP = index * 2;
+        updateView();
+    }
+}
+
         renderApp();
     </script>
 </body>
