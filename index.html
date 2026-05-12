@@ -30,7 +30,7 @@
 <body class="text-zinc-800">
 
     <div id="app" class="flex transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] w-full h-screen will-change-transform">
-        </div>
+    </div>
 
     <div id="page-indicator" class="fixed bottom-2 left-1/2 -translate-x-1/2 flex gap-3 z-50 p-4 cursor-grab active:cursor-grabbing touch-none"></div>
     
@@ -52,7 +52,6 @@
                     // 🚑 HEALER: Fix broken 'spread' state from previous bug!
                     if (meta.spreadOrder) {
                         console.log("🩹 Healing broken meta state back to 'pages' abstraction...");
-                        // Convert 'spread-xxx' to 'page-xxx' to match file paths!
                         meta.pageOrder = meta.spreadOrder.map(id => id.replace('spread-', 'page-'));
                         delete meta.spreadOrder;
                     }
@@ -60,11 +59,12 @@
                     meta.version = meta.version || 2;
                     meta.currentP = meta.currentP || 0;
                     meta.pageOrder = meta.pageOrder || [];
+                    meta.scrolls = meta.scrolls || []; // 📌 Init scroll memory
                     
                     return meta;
                 }
                 
-                return { version: 2, currentP: 0, pageOrder: [] };
+                return { version: 2, currentP: 0, pageOrder: [], scrolls: [] };
             },
             async saveNotebookMeta(metaData) {
                 await FileSystemAPI.writeJsonAtomic('meta.json', metaData);
@@ -89,10 +89,11 @@
         const MD_MAP = {'* ': 'task', 'x ': 'completed', '> ': 'migrated', '< ': 'scheduled', 'o ': 'event', '- ': 'note', '# ': 'h1', '## ': 'h2', '### ': 'h3', '#### ': 'h4', '##### ': 'h5', '###### ': 'h6'};
 
         // App State (Unified 'Page' Abstraction 📖)
-        let metaData = { version: 2, currentP: 0, pageOrder: [] };
+        let metaData = { version: 2, currentP: 0, pageOrder: [], scrolls: [] };
         let pagesData = []; 
         let currentP = 0;   
         let saveTimeout = null;
+        let scrollTimeout = null;
 
         // ==========================================
         // 🛠️ UTILS & DATA MANAGEMENT
@@ -118,11 +119,15 @@
         }
         
         async function cleanEmptySpreads() {
-            let currentPair = Math.floor(currentP / 2);
             let layoutChanged = false;
             
-            for (let i = pagesData.length - 2; i >= 0; i -= 2) {
-                if (Math.floor(i / 2) === currentPair || pagesData.length <= 2) continue;
+            // 🧹 Smarter Cleanup: Only trim completely empty spreads from the END of the notebook.
+            // This safely preserves intentional blank spreads placed in the middle!
+            while (pagesData.length > 2) {
+                const i = pagesData.length - 2;
+                
+                // 🛡️ Never delete the spread the user is currently viewing!
+                if (Math.floor(i / 2) === Math.floor(currentP / 2)) break;
 
                 const p1Empty = pagesData[i].every(b => b.text.trim() === '' && b.type === 'text');
                 const p2Empty = (pagesData[i+1] || []).every(b => b.text.trim() === '' && b.type === 'text');
@@ -133,10 +138,18 @@
 
                     pagesData.splice(i, 2);
                     metaData.pageOrder.splice(i, 2);
+                    metaData.scrolls.splice(i, 2); // 📌 Clean up scroll memory too
                     
-                    if (i < currentP) currentP -= 2; 
                     layoutChanged = true;
+                } else {
+                    break; // 🛑 Hit a spread with content, stop trimming!
                 }
+            }
+
+            // Fallback safety if currentP got left out of bounds
+            if (currentP >= pagesData.length) {
+                currentP = Math.max(0, pagesData.length - 2);
+                layoutChanged = true;
             }
 
             if (layoutChanged) {
@@ -190,6 +203,15 @@
                 sel.removeAllRanges(); sel.addRange(range);
             }, 10);
         }
+        
+        // 📌 Sticky Scroll Memory
+        function updateScroll(idx, top) {
+            metaData.scrolls[idx] = top;
+            clearTimeout(scrollTimeout);
+            scrollTimeout = setTimeout(() => {
+                StorageManager.saveNotebookMeta(metaData);
+            }, 1000);
+        }
 
         // ==========================================
         // 🎨 RENDERING
@@ -205,14 +227,21 @@
             const app = document.getElementById('app');
             app.innerHTML = pagesData.map((p, i) => `
                 <div class="w-[50vw] h-screen flex-shrink-0 relative flex justify-center ${i % 2 === 0 ? 'border-r border-dashed border-zinc-300' : ''}">
-                    <div class="w-full h-full overflow-y-auto px-10 pt-24 pb-32 flex justify-center">
+                    <div class="w-full h-full overflow-y-auto px-10 pt-24 pb-32 flex justify-center scroll-container" data-idx="${i}" onscroll="updateScroll(${i}, this.scrollTop)">
                         <div class="w-full max-w-md bujo-list relative min-h-[50vh]" data-idx="${i}"></div>
                     </div>
                     <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">${i + 1}</div>
                 </div>
             `).join('');
             
-            pagesData.forEach((_, i) => renderPage(i));
+            pagesData.forEach((_, i) => {
+                renderPage(i);
+                // 📌 Restore Scroll Position
+                const container = document.querySelector(`.scroll-container[data-idx="${i}"]`);
+                if (container && metaData.scrolls[i]) {
+                    container.scrollTop = metaData.scrolls[i];
+                }
+            });
             updateView();
         }
 
@@ -328,7 +357,11 @@
             const bIdx = pageList.findIndex(b => b.id === blockDiv.dataset.id);
             const block = pageList[bIdx];
 
+            // 🚀 Navigation from within edit blocks!
+            if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); changePage(-1); return; }
+            if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); changePage(1); return; }
             if (e.altKey && e.key === 'Enter') { e.preventDefault(); changePage(1); return; }
+            
             if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); cycleType(block, pIdx); return; }
 
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -396,10 +429,13 @@
         // ✋ DRAG & DROP
         // ==========================================
         let draggedId = null;
+        let sourcePIdx = null;
+
         document.addEventListener('dragstart', e => {
             const block = e.target.closest('.bullet-block');
             if(block && block.getAttribute('draggable') === 'true') {
                 draggedId = block.dataset.id;
+                sourcePIdx = parseInt(block.closest('.bujo-list').dataset.idx); // ⚡ Tag the source list!
                 setTimeout(() => block.classList.add('dragging'), 0);
             } else { 
                 e.preventDefault(); 
@@ -422,13 +458,27 @@
             if(el) {
                 el.classList.remove('dragging');
                 el.setAttribute('draggable', 'false'); 
+                
+                const targetList = el.closest('.bujo-list');
+                if (targetList) {
+                    const targetPIdx = parseInt(targetList.dataset.idx);
+                    const allBlocks = pagesData.flat();
+                    
+                    // ⚡ Targeted Array Rebuild: Only map the affected pages, ignoring the rest!
+                    const rebuildPage = (idx) => {
+                        const list = document.querySelector(`.bujo-list[data-idx="${idx}"]`);
+                        if (list) {
+                            pagesData[idx] = Array.from(list.children).map(c => allBlocks.find(b => b.id === c.dataset.id));
+                        }
+                    };
+                    
+                    rebuildPage(sourcePIdx);
+                    if (sourcePIdx !== targetPIdx) rebuildPage(targetPIdx);
+                }
             }
-            const allBlocks = pagesData.flat();
-            pagesData = pagesData.map((_, i) => {
-                const list = document.querySelector(`.bujo-list[data-idx="${i}"]`);
-                return Array.from(list.children).map(c => allBlocks.find(b => b.id === c.dataset.id));
-            });
-            save(); draggedId = null;
+            save(); 
+            draggedId = null;
+            sourcePIdx = null;
         });
 
         // ==========================================
