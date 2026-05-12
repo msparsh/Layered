@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Minimalist Bujo - Pro</title>
+    <title>Minimalist Bujo - Spread 📖</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         /* ✨ Essential overrides */
@@ -29,28 +29,32 @@
         const INSTANT = { '.': 'task', 'o': 'event', '-': 'note', '!': 'priority', '?': 'question' };
         const CYCLE = ['open', 'completed', 'migrated', 'scheduled'];
 
-        let pagesData = JSON.parse(localStorage.getItem('bujo_pages_pro')) || [[createBlock()]];
-        let currentP = 0;
+        let pagesData = JSON.parse(localStorage.getItem('bujo_pages_spread')) || [[createBlock()], [createBlock()]];
+        let currentP = 0; // Tracks the index of the left-hand page 📖
 
         function createBlock(text = '', depth = 0, type = 'task') { 
             return { id: crypto.randomUUID(), type, status: 'open', text, depth }; 
         }
         
         function save() { 
-            localStorage.setItem('bujo_pages_pro', JSON.stringify(pagesData)); 
+            localStorage.setItem('bujo_pages_spread', JSON.stringify(pagesData)); 
             renderIndicator(); 
         }
 
         /**
-         * 🎨 DOM RENDERING (TAILWIND POWERED)
+         * 🎨 DOM RENDERING 
          */
         function renderApp() {
+            // Ensure we always have an even number of pages for the spread! 👯‍♀️
+            if (pagesData.length % 2 !== 0) pagesData.push([createBlock()]);
+
             const app = document.getElementById('app');
             app.innerHTML = pagesData.map((p, i) => `
-                <div class="w-screen h-screen flex-shrink-0 flex justify-center px-6 pt-24 pb-32 overflow-y-auto">
-                    <div class="w-full max-w-lg bujo-list relative" data-idx="${i}"></div>
+                <div class="w-[50vw] h-screen flex-shrink-0 flex justify-center px-10 pt-24 pb-32 overflow-y-auto ${i % 2 === 0 ? 'border-r border-dashed border-zinc-300' : ''}">
+                    <div class="w-full max-w-md bujo-list relative" data-idx="${i}"></div>
                 </div>
             `).join('');
+            
             pagesData.forEach((_, i) => renderPage(i));
             updateView();
         }
@@ -75,20 +79,32 @@
         }
 
         function updateView() {
-            document.getElementById('app').style.transform = `translateX(-${currentP * 100}vw)`;
+            // Move by 50vw per page index! 📏
+            document.getElementById('app').style.transform = `translateX(-${currentP * 50}vw)`;
             renderIndicator();
         }
 
         function renderIndicator() {
-            document.getElementById('page-indicator').innerHTML = pagesData.map((_, i) => 
-                `<span class="h-2 rounded-full transition-all duration-300 ${i === currentP ? 'w-6 bg-zinc-800' : 'w-2 bg-zinc-300'}"></span>`
+            const pairCount = Math.ceil(pagesData.length / 2);
+            const activePair = Math.floor(currentP / 2);
+            document.getElementById('page-indicator').innerHTML = Array.from({length: pairCount}).map((_, i) => 
+                `<span class="h-2 rounded-full transition-all duration-300 ${i === activePair ? 'w-6 bg-zinc-800' : 'w-2 bg-zinc-300'}"></span>`
             ).join('');
         }
 
         function changePage(dir) {
-            currentP += dir;
+            currentP += dir * 2; // Jump by 2 pages at a time! 🦘
             if (currentP < 0) currentP = 0;
-            if (currentP >= pagesData.length) { pagesData.push([createBlock()]); renderApp(); }
+            
+            // Generate new pages if we hit the end! 🪄
+            let added = false;
+            while (currentP + 1 >= pagesData.length) { 
+                pagesData.push([createBlock()]); 
+                added = true;
+            }
+            if (pagesData.length % 2 !== 0) { pagesData.push([createBlock()]); added = true; }
+            
+            if (added) renderApp();
             updateView(); save();
         }
 
@@ -118,7 +134,7 @@
         }
 
         /**
-         * 🕹️ EVENT DELEGATION (WRITING LESS CODE)
+         * 🕹️ EVENT DELEGATION
          */
         // 1. Inputs ✍️
         document.addEventListener('input', e => {
@@ -204,10 +220,10 @@
                 e.preventDefault();
                 const dir = e.key === 'ArrowUp' ? -1 : 1;
                 if (bIdx + dir >= 0 && bIdx + dir < pageList.length) {
-                    if (e.altKey) { // Move block up/down
+                    if (e.altKey) { 
                         [pageList[bIdx], pageList[bIdx+dir]] = [pageList[bIdx+dir], pageList[bIdx]];
                         save(); renderPage(pIdx); focusBlock(blockId);
-                    } else { // Just move cursor
+                    } else { 
                         focusBlock(pageList[bIdx+dir].id);
                     }
                 }
