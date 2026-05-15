@@ -36,12 +36,16 @@
         // 💾 PERSISTENCE LAYER
         // ==========================================
         const FileSystemAPI = {
-            async readJson(path) { return await window.electronAPI.readJson(path); },
-            async writeJsonAtomic(path, data) { return await window.electronAPI.writeJsonAtomic(path, data); },
-            async trashJson(path) { return await window.electronAPI.trashJson(path); }
+            async readJson(path) { return window.electronAPI ? await window.electronAPI.readJson(path) : null; },
+            async writeJsonAtomic(path, data) { if(window.electronAPI) await window.electronAPI.writeJsonAtomic(path, data); },
+            async trashJson(path) { if(window.electronAPI) await window.electronAPI.trashJson(path); }
         };
 
         const StorageManager = {
+            saveTimeout: null,
+            isSaving: false,
+            needsSave: false,
+
             async loadNotebookMeta() {
                 const meta = await FileSystemAPI.readJson('meta.json');
                 if (meta) {
@@ -53,404 +57,573 @@
                 }
                 return { version: 2, currentP: 0, pageOrder: [], scrolls: [] };
             },
-            async saveNotebookMeta(metaData) { await FileSystemAPI.writeJsonAtomic('meta.json', metaData); },
-            async loadPage(pageId) { return (await FileSystemAPI.readJson(`pages/${pageId}.json`)) || [createBlock()]; },
-            async savePage(pageId, pageData) { await FileSystemAPI.writeJsonAtomic(`pages/${pageId}.json`, pageData); },
-            async trashPage(pageId) { await FileSystemAPI.trashJson(`pages/${pageId}.json`); }
+            
+            async executeSave(forceRender = false) {
+                if (this.isSaving) {
+                    this.needsSave = true;
+                    return;
+                }
+                
+                this.isSaving = true;
+                this.needsSave = false;
+
+                try {
+                    const layoutChanged = await State.cleanEmptySpreads();
+                    const activePair = Math.floor(State.currentP / 2) * 2;
+                    
+                    if(State.meta.pageOrder[activePair]) await FileSystemAPI.writeJsonAtomic(`pages/${State.meta.pageOrder[activePair]}.json`, State.pages[activePair]);
+                    if(State.meta.pageOrder[activePair + 1]) await FileSystemAPI.writeJsonAtomic(`pages/${State.meta.pageOrder[activePair + 1]}.json`, State.pages[activePair + 1]);
+                    
+                    State.meta.currentP = State.currentP;
+                    await FileSystemAPI.writeJsonAtomic('meta.json', State.meta);
+                    
+                    if (layoutChanged || forceRender) Renderer.renderApp();
+                    else Renderer.renderIndicator(); 
+                } finally {
+                    this.isSaving = false;
+                    if (this.needsSave) this.executeSave(); // Process queued save
+                }
+            },
+
+            requestSave(forceRender = false) {
+                clearTimeout(this.saveTimeout);
+                this.saveTimeout = setTimeout(() => this.executeSave(forceRender), 500);
+            }
         };
 
         // ==========================================
-        // 🧠 STATE & CONFIG
+        // 🧠 STATE MANAGEMENT (O(1) Lookups)
         // ==========================================
         const BULLETS = { task: '•', completed: '✕', migrated: '>', scheduled: '<', event: '○', note: '-' };
         const CYCLE = ['task', 'completed', 'migrated', 'scheduled', 'event', 'note'];
         const MD_MAP = {'* ': 'task', 'x ': 'completed', '> ': 'migrated', '< ': 'scheduled', 'o ': 'event', '- ': 'note', '# ': 'h1', '## ': 'h2', '### ': 'h3', '#### ': 'h4', '##### ': 'h5', '###### ': 'h6'};
 
-        let metaData = { version: 2, currentP: 0, pageOrder: [], scrolls: [] };
-        let pagesData = []; 
-        let currentP = 0;   
-        let saveTimeout = null;
+        const State = {
+            meta: null,
+            pages: [],
+            currentP: 0,
+            blockMap: new Map(), // O(1) Index
 
-        function createBlock(text = '', depth = 0, type = 'text') { return { id: crypto.randomUUID(), type, text, depth }; }
+            createBlock(text = '', depth = 0, type = 'text') { 
+                return { id: crypto.randomUUID(), type, text, depth }; 
+            },
 
-        async function initApp() {
-            metaData = await StorageManager.loadNotebookMeta();
-            if (metaData.pageOrder.length === 0) {
-                metaData.pageOrder.push(`page-${crypto.randomUUID()}`, `page-${crypto.randomUUID()}`);
-                await StorageManager.saveNotebookMeta(metaData);
+            async init() {
+                this.meta = await StorageManager.loadNotebookMeta();
+                if (this.meta.pageOrder.length === 0) {
+                    this.meta.pageOrder.push(`page-${crypto.randomUUID()}`, `page-${crypto.randomUUID()}`);
+                    await FileSystemAPI.writeJsonAtomic('meta.json', this.meta);
+                }
+                this.pages = await Promise.all(this.meta.pageOrder.map(id => 
+                    FileSystemAPI.readJson(`pages/${id}.json`).then(d => d || [this.createBlock()])
+                ));
+                this.currentP = this.meta.currentP || 0;
+                this.rebuildIndex();
+            },
+
+            rebuildIndex() {
+                this.blockMap.clear();
+                this.pages.forEach((page, pIdx) => {
+                    page.forEach((block, bIdx) => {
+                        this.blockMap.set(block.id, { pIdx, bIdx, block });
+                    });
+                });
+            },
+
+            getBlockCoords(blockId) {
+                return this.blockMap.get(blockId) || null; // O(1) lookup
+            },
+
+            async cleanEmptySpreads() {
+                let layoutChanged = false;
+                while (this.pages.length > 2) {
+                    const i = this.pages.length - 2;
+                    if (Math.floor(i / 2) === Math.floor(this.currentP / 2)) break;
+
+                    const p1Empty = this.pages[i].every(b => b.text.trim() === '' && b.type === 'text');
+                    const p2Empty = (this.pages[i+1] || []).every(b => b.text.trim() === '' && b.type === 'text');
+
+                    if (p1Empty && p2Empty) {
+                        await FileSystemAPI.trashJson(`pages/${this.meta.pageOrder[i]}.json`);
+                        await FileSystemAPI.trashJson(`pages/${this.meta.pageOrder[i+1]}.json`);
+                        this.pages.splice(i, 2); this.meta.pageOrder.splice(i, 2); this.meta.scrolls.splice(i, 2);
+                        layoutChanged = true;
+                    } else break;
+                }
+                if (this.currentP >= this.pages.length) { 
+                    this.currentP = Math.max(0, this.pages.length - 2); 
+                    layoutChanged = true; 
+                }
+                if (layoutChanged) this.rebuildIndex();
+                return layoutChanged;
+            },
+            
+            async ensureEnoughPages() {
+                if (this.currentP >= this.pages.length) {
+                    this.meta.pageOrder.push(`page-${crypto.randomUUID()}`, `page-${crypto.randomUUID()}`);
+                    this.pages.push([this.createBlock()], [this.createBlock()]);
+                    this.rebuildIndex();
+                    await FileSystemAPI.writeJsonAtomic('meta.json', this.meta);
+                    return true;
+                }
+                return false;
             }
-            pagesData = await Promise.all(metaData.pageOrder.map(id => StorageManager.loadPage(id)));
-            currentP = metaData.currentP || 0;
-            renderApp();
-        }
+        };
 
-        async function save(forceRender = false) { 
-            clearTimeout(saveTimeout);
-            saveTimeout = setTimeout(async () => {
-                const layoutChanged = await cleanEmptySpreads();
-                const activePair = Math.floor(currentP / 2) * 2;
-                if(metaData.pageOrder[activePair]) await StorageManager.savePage(metaData.pageOrder[activePair], pagesData[activePair]);
-                if(metaData.pageOrder[activePair + 1]) await StorageManager.savePage(metaData.pageOrder[activePair + 1], pagesData[activePair + 1]);
+        // ==========================================
+        // 🎯 SELECTION & CARET MANAGEMENT
+        // ==========================================
+        const SelectionManager = {
+            getCaretPos(el) { 
+                const sel = window.getSelection();
+                if (sel.rangeCount) {
+                    const r = sel.getRangeAt(0).cloneRange();
+                    r.selectNodeContents(el);
+                    r.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset);
+                    return r.toString().length;
+                }
+                return 0;
+            },
+
+            focusBlock(id, offset = 0, atEnd = false) {
+                const el = document.querySelector(`[data-id="${id}"] .bullet-text`);
+                if (!el) return;
                 
-                metaData.currentP = currentP;
-                await StorageManager.saveNotebookMeta(metaData);
-                if (layoutChanged || forceRender) renderApp();
-                else renderIndicator(); 
-            }, 500); 
-        }
-
-        async function cleanEmptySpreads() {
-            let layoutChanged = false;
-            while (pagesData.length > 2) {
-                const i = pagesData.length - 2;
-                if (Math.floor(i / 2) === Math.floor(currentP / 2)) break;
-
-                const p1Empty = pagesData[i].every(b => b.text.trim() === '' && b.type === 'text');
-                const p2Empty = (pagesData[i+1] || []).every(b => b.text.trim() === '' && b.type === 'text');
-
-                if (p1Empty && p2Empty) {
-                    await StorageManager.trashPage(metaData.pageOrder[i]);
-                    await StorageManager.trashPage(metaData.pageOrder[i+1]);
-                    pagesData.splice(i, 2); metaData.pageOrder.splice(i, 2); metaData.scrolls.splice(i, 2);
-                    layoutChanged = true;
-                } else break;
+                el.focus();
+                const sel = window.getSelection();
+                const range = document.createRange();
+                
+                if (atEnd) {
+                    range.selectNodeContents(el);
+                    range.collapse(false);
+                } else if (el.firstChild && el.firstChild.nodeType === Node.TEXT_NODE) {
+                    const safeOffset = Math.min(offset, el.firstChild.length);
+                    range.setStart(el.firstChild, safeOffset);
+                    range.collapse(true);
+                } else {
+                    range.setStart(el, 0);
+                    range.collapse(true);
+                }
+                sel.removeAllRanges(); 
+                sel.addRange(range);
             }
-            if (currentP >= pagesData.length) { currentP = Math.max(0, pagesData.length - 2); layoutChanged = true; }
-            return layoutChanged;
-        }
-
-        function updateScroll(idx, top) { metaData.scrolls[idx] = top; save(); }
+        };
 
         // ==========================================
-        // 🎨 RENDERING
+        // 🎨 RENDERER (DOM Layer)
         // ==========================================
-        function renderApp() {
-            if (pagesData.length % 2 !== 0) {
-                metaData.pageOrder.push(`page-${crypto.randomUUID()}`);
-                pagesData.push([createBlock()]);
-            }
+        const Renderer = {
+            renderApp() {
+                if (State.pages.length % 2 !== 0) {
+                    State.meta.pageOrder.push(`page-${crypto.randomUUID()}`);
+                    State.pages.push([State.createBlock()]);
+                    State.rebuildIndex();
+                }
 
-            document.getElementById('app').innerHTML = pagesData.map((p, i) => `
-                <div class="w-[50vw] h-screen flex-shrink-0 relative flex justify-center ${i % 2 === 0 ? 'border-r border-dashed border-zinc-300' : ''}">
-                    <div class="w-full h-full overflow-y-auto px-10 pt-24 pb-32 flex justify-center scroll-container" data-idx="${i}" onscroll="updateScroll(${i}, this.scrollTop)">
-                        <div class="w-full max-w-md bujo-list relative min-h-[50vh]" data-idx="${i}"></div>
+                document.getElementById('app').innerHTML = State.pages.map((p, i) => `
+                    <div class="w-[50vw] h-screen flex-shrink-0 relative flex justify-center ${i % 2 === 0 ? 'border-r border-dashed border-zinc-300' : ''}">
+                        <div class="w-full h-full overflow-y-auto px-10 pt-24 pb-32 flex justify-center scroll-container" data-idx="${i}">
+                            <div class="w-full max-w-md bujo-list relative min-h-[50vh]" data-idx="${i}"></div>
+                        </div>
+                        <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">${i + 1}</div>
                     </div>
-                    <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">${i + 1}</div>
-                </div>
-            `).join('');
-            
-            pagesData.forEach((_, i) => {
-                renderPage(i);
-                const container = document.querySelector(`.scroll-container[data-idx="${i}"]`);
-                if (container && metaData.scrolls[i]) container.scrollTop = metaData.scrolls[i];
-            });
-            updateView();
-        }
+                `).join('');
+                
+                State.pages.forEach((_, i) => {
+                    this.renderPage(i);
+                    const container = document.querySelector(`.scroll-container[data-idx="${i}"]`);
+                    if (container && State.meta.scrolls[i]) container.scrollTop = State.meta.scrolls[i];
+                    
+                    container.addEventListener('scroll', (e) => {
+                        State.meta.scrolls[i] = e.target.scrollTop;
+                        StorageManager.requestSave();
+                    });
+                });
+                this.updateViewport();
+            },
 
-        function renderPage(pIdx) {
-            const list = document.querySelector(`.bujo-list[data-idx="${pIdx}"]`);
-            if(!list) return;
-            
-            list.innerHTML = pagesData[pIdx].map(b => {
-                let textClass = getBlockClasses(b);
+            renderPage(pIdx) {
+                const list = document.querySelector(`.bujo-list[data-idx="${pIdx}"]`);
+                if(!list) return;
+                list.innerHTML = State.pages[pIdx].map(b => this.generateBlockHTML(b)).join('');
+            },
+
+            generateBlockHTML(b) {
+                let textClass = this.getBlockClasses(b);
                 const isBullet = CYCLE.includes(b.type);
                 const symbol = isBullet ? BULLETS[b.type] : ''; 
 
                 return `
                 <div class="relative flex items-start mb-2 bullet-block group" data-id="${b.id}" style="margin-left: ${b.depth * 28}px">
-                    <div class="absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isBullet ? 'opacity-40 text-zinc-500' : 'opacity-0 text-zinc-300'} group-hover:opacity-100 hover:!text-black font-bold transition-all" 
-                         onmousedown="this.parentElement.setAttribute('draggable', 'true')" 
-                         onmouseup="this.parentElement.setAttribute('draggable', 'false')"
-                         onmouseleave="this.parentElement.setAttribute('draggable', 'false')">
+                    <div class="absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isBullet ? 'opacity-40 text-zinc-500' : 'opacity-0 text-zinc-300'} group-hover:opacity-100 hover:!text-black font-bold transition-all" draggable="false">
                         ${symbol || '::'} 
                     </div>
                     <div class="${textClass}" contenteditable="true" spellcheck="false">${b.text}</div>
                 </div>`;
-            }).join('');
-        }
+            },
 
-        function updateSingleBlockDOM(pIdx, bIdx) {
-            const block = pagesData[pIdx][bIdx];
-            const blockEl = document.querySelector(`[data-id="${block.id}"]`);
-            if (!blockEl) return;
+            getBlockClasses(b) {
+                let cls = "flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ";
+                const styles = { 'h1': "text-4xl font-bold mt-6 mb-2 ", 'h2': "text-3xl font-bold mt-5 mb-2 ", 'h3': "text-2xl font-bold mt-4 mb-1 ", 'h4': "text-xl font-semibold mt-3 mb-1 ", 'h5': "text-lg font-semibold mt-2 mb-1 ", 'h6': "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500 " };
+                cls += styles[b.type] || "text-[1.05rem] leading-relaxed ";
+                if (b.type === 'completed') cls += "line-through text-zinc-400 opacity-60";
+                else if (['migrated', 'scheduled'].includes(b.type)) cls += "italic text-zinc-500";
+                return cls;
+            },
 
-            blockEl.style.marginLeft = `${block.depth * 28}px`;
+            updateBlock(block, el) {
+                const blockEl = el || document.querySelector(`[data-id="${block.id}"]`);
+                if (!blockEl) return;
 
-            const isBullet = CYCLE.includes(block.type);
-            const handleEl = blockEl.querySelector('.bullet-handle');
-            handleEl.className = `absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isBullet ? 'opacity-40 text-zinc-500' : 'opacity-0 text-zinc-300'} group-hover:opacity-100 hover:!text-black font-bold transition-all`;
-            handleEl.innerHTML = isBullet ? BULLETS[block.type] : '::';
+                blockEl.style.marginLeft = `${block.depth * 28}px`;
+                const isBullet = CYCLE.includes(block.type);
+                const handleEl = blockEl.querySelector('.bullet-handle');
+                handleEl.className = `absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isBullet ? 'opacity-40 text-zinc-500' : 'opacity-0 text-zinc-300'} group-hover:opacity-100 hover:!text-black font-bold transition-all`;
+                handleEl.innerHTML = isBullet ? BULLETS[block.type] : '::';
 
-            const textEl = blockEl.querySelector('.bullet-text');
-            textEl.className = getBlockClasses(block);
-            if (textEl.textContent !== block.text) textEl.textContent = block.text;
-        }
+                const textEl = blockEl.querySelector('.bullet-text');
+                textEl.className = this.getBlockClasses(block);
+                if (textEl.textContent !== block.text) textEl.textContent = block.text;
+            },
 
-        function getBlockClasses(b) {
-            let cls = "flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ";
-            const styles = { 'h1': "text-4xl font-bold mt-6 mb-2 ", 'h2': "text-3xl font-bold mt-5 mb-2 ", 'h3': "text-2xl font-bold mt-4 mb-1 ", 'h4': "text-xl font-semibold mt-3 mb-1 ", 'h5': "text-lg font-semibold mt-2 mb-1 ", 'h6': "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500 " };
-            cls += styles[b.type] || "text-[1.05rem] leading-relaxed ";
-            if (b.type === 'completed') cls += "line-through text-zinc-400 opacity-60";
-            else if (['migrated', 'scheduled'].includes(b.type)) cls += "italic text-zinc-500";
-            return cls;
-        }
+            insertBlockAfter(pIdx, refBlockId, newBlock) {
+                const list = document.querySelector(`.bujo-list[data-idx="${pIdx}"]`);
+                const refEl = list.querySelector(`[data-id="${refBlockId}"]`);
+                refEl.insertAdjacentHTML('afterend', this.generateBlockHTML(newBlock));
+            },
 
-        function updateView() {
-            document.getElementById('app').style.transform = `translateX(-${currentP * 50}vw)`;
-            renderIndicator();
-        }
+            removeBlock(blockId) {
+                const blockEl = document.querySelector(`[data-id="${blockId}"]`);
+                if (blockEl) blockEl.remove();
+            },
 
-        function renderIndicator() {
-            const activePair = Math.floor(currentP / 2);
-            document.getElementById('page-indicator').innerHTML = Array.from({length: Math.ceil(pagesData.length / 2)}).map((_, i) => 
-                `<span onclick="jumpToPair(${i})" class="pointer-events-none h-2 rounded-full transition-all duration-300 ${i === activePair ? 'w-6 bg-zinc-800' : 'w-2 bg-zinc-300 hover:bg-zinc-400'}"></span>`
-            ).join('');
-        }
+            updateViewport() {
+                document.getElementById('app').style.transform = `translateX(-${State.currentP * 50}vw)`;
+                this.renderIndicator();
+            },
 
-        // ==========================================
-        // 🛠️ COMMAND OPERATIONS
-        // ==========================================
-        function indentBlock(pIdx, bIdx, direction) {
-            pagesData[pIdx][bIdx].depth = Math.max(0, Math.min(4, pagesData[pIdx][bIdx].depth + direction));
-            updateSingleBlockDOM(pIdx, bIdx);
-            save();
-        }
-
-        function setBlockType(pIdx, bIdx, newType, newText = null) {
-            const block = pagesData[pIdx][bIdx];
-            block.type = newType;
-            if (newText !== null) block.text = newText;
-            updateSingleBlockDOM(pIdx, bIdx);
-            save();
-        }
-
-        function splitBlock(pIdx, bIdx, caretPos) {
-            const pageList = pagesData[pIdx];
-            const block = pageList[bIdx];
-            const txt = block.text;
-            block.text = txt.slice(0, caretPos);
-            
-            const newType = block.type.startsWith('h') ? 'text' : block.type;
-            const newBlock = createBlock(txt.slice(caretPos), block.depth, newType);
-            
-            pageList.splice(bIdx + 1, 0, newBlock);
-            updateSingleBlockDOM(pIdx, bIdx); 
-            renderPage(pIdx); 
-            focusBlock(newBlock.id, true);
-            save();
-        }
-
-        function mergeBlocks(pIdx, bIdx) {
-            const pageList = pagesData[pIdx];
-            const block = pageList[bIdx];
-            const prevBlock = pageList[bIdx - 1];
-            
-            const prevLength = prevBlock.text.length;
-            prevBlock.text += block.text;
-            pageList.splice(bIdx, 1);
-            
-            renderPage(pIdx);
-            save();
-            
-            setTimeout(() => {
-                const el = document.querySelector(`[data-id="${prevBlock.id}"] .bullet-text`);
-                if (!el) return;
-                el.focus();
-                const sel = window.getSelection();
-                const range = document.createRange();
-                if (el.firstChild) range.setStart(el.firstChild, prevLength);
-                else range.setStart(el, 0);
-                range.collapse(true);
-                sel.removeAllRanges(); sel.addRange(range);
-            }, 10);
-        }
-
-        // ==========================================
-        // 🕹️ NAVIGATION & UTILS
-        // ==========================================
-        function jumpToPair(pairIdx) { currentP = pairIdx * 2; updateView(); save(); }
-
-        async function changePage(dir) {
-            const nextP = currentP + dir * 2;
-            if (nextP < 0) return;
-            if (nextP >= pagesData.length) {
-                metaData.pageOrder.push(`page-${crypto.randomUUID()}`, `page-${crypto.randomUUID()}`);
-                pagesData.push([createBlock()], [createBlock()]);
-                await StorageManager.saveNotebookMeta(metaData);
-                renderApp();
+            renderIndicator() {
+                const activePair = Math.floor(State.currentP / 2);
+                document.getElementById('page-indicator').innerHTML = Array.from({length: Math.ceil(State.pages.length / 2)}).map((_, i) => 
+                    `<span onclick="EditorEngine.jumpToPair(${i})" class="pointer-events-none h-2 rounded-full transition-all duration-300 ${i === activePair ? 'w-6 bg-zinc-800' : 'w-2 bg-zinc-300 hover:bg-zinc-400'}"></span>`
+                ).join('');
             }
-            currentP = nextP; updateView(); save();
-        }
+        };
 
-        function getCaretPos(el) { 
-            const sel = window.getSelection();
-            if (sel.rangeCount) {
-                const r = sel.getRangeAt(0).cloneRange();
-                r.selectNodeContents(el);
-                r.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset);
-                return r.toString().length;
-            }
-            return 0;
-        }
+        // ==========================================
+        // 🛠️ EDITOR ENGINE (Commands & Mutations)
+        // ==========================================
+        const EditorEngine = {
+            updateText(blockId, newText, blockEl) {
+                const coords = State.getBlockCoords(blockId);
+                if (!coords) return;
+                const { block } = coords;
+                block.text = newText;
 
-        function focusBlock(id, atStart = false) {
-            setTimeout(() => {
-                const el = document.querySelector(`[data-id="${id}"] .bullet-text`);
+                for (const [prefix, type] of Object.entries(MD_MAP)) {
+                    if (block.text.startsWith(prefix)) {
+                        block.type = type;
+                        block.text = block.text.substring(prefix.length);
+                        Renderer.updateBlock(block, blockEl);
+                        SelectionManager.focusBlock(block.id, 0);
+                        break;
+                    }
+                }
+                StorageManager.requestSave();
+            },
+
+            indentBlock(blockId, direction) {
+                const coords = State.getBlockCoords(blockId);
+                if (!coords) return;
+                coords.block.depth = Math.max(0, Math.min(4, coords.block.depth + direction));
+                Renderer.updateBlock(coords.block);
+                StorageManager.requestSave();
+            },
+
+            setBlockType(blockId, newType) {
+                const coords = State.getBlockCoords(blockId);
+                if (!coords) return;
+                coords.block.type = newType;
+                Renderer.updateBlock(coords.block);
+                StorageManager.requestSave();
+            },
+
+            cycleType(blockId) {
+                const coords = State.getBlockCoords(blockId);
+                if (!coords) return;
+                let currentIndex = CYCLE.indexOf(coords.block.type);
+                this.setBlockType(blockId, currentIndex === -1 ? 'task' : CYCLE[(currentIndex + 1) % CYCLE.length]);
+            },
+
+            splitBlock(blockId, caretPos) {
+                const coords = State.getBlockCoords(blockId);
+                if (!coords) return;
+                const { pIdx, bIdx, block } = coords;
+                
+                const txt = block.text;
+                block.text = txt.slice(0, caretPos);
+                
+                const newType = block.type.startsWith('h') ? 'text' : block.type;
+                const newBlock = State.createBlock(txt.slice(caretPos), block.depth, newType);
+                
+                State.pages[pIdx].splice(bIdx + 1, 0, newBlock);
+                State.rebuildIndex(); // Re-index after array splice
+                
+                Renderer.updateBlock(block);
+                Renderer.insertBlockAfter(pIdx, block.id, newBlock);
+                
+                SelectionManager.focusBlock(newBlock.id, 0);
+                StorageManager.requestSave();
+            },
+
+            mergeWithPrevious(blockId) {
+                const coords = State.getBlockCoords(blockId);
+                if (!coords || coords.bIdx === 0) return;
+                
+                const { pIdx, bIdx, block } = coords;
+                const prevBlock = State.pages[pIdx][bIdx - 1];
+                
+                const prevLength = prevBlock.text.length;
+                prevBlock.text += block.text;
+                
+                State.pages[pIdx].splice(bIdx, 1);
+                State.rebuildIndex(); // Re-index
+                
+                Renderer.removeBlock(block.id);
+                Renderer.updateBlock(prevBlock);
+                
+                SelectionManager.focusBlock(prevBlock.id, prevLength);
+                StorageManager.requestSave();
+            },
+
+            navigateVertical(blockId, direction) {
+                const el = document.querySelector(`[data-id="${blockId}"]`);
                 if (!el) return;
-                el.focus();
-                const sel = window.getSelection();
-                const range = document.createRange();
-                range.selectNodeContents(el);
-                range.collapse(atStart);
-                sel.removeAllRanges(); sel.addRange(range);
-            }, 10);
-        }
+                const target = direction === -1 ? el.previousElementSibling : el.nextElementSibling;
+                if (target) SelectionManager.focusBlock(target.dataset.id, 0, direction === -1);
+            },
+
+            async changePage(dir) {
+                const nextP = State.currentP + dir * 2;
+                if (nextP < 0) return;
+                State.currentP = nextP; 
+                if (await State.ensureEnoughPages()) Renderer.renderApp();
+                else Renderer.updateViewport();
+                StorageManager.requestSave();
+            },
+
+            jumpToPair(pairIdx) { 
+                State.currentP = pairIdx * 2; 
+                Renderer.updateViewport(); 
+                StorageManager.requestSave(); 
+            },
+
+            moveBlockDOM(blockId, targetId, insertAfter) {
+                const sourceCoords = State.getBlockCoords(blockId);
+                const targetCoords = State.getBlockCoords(targetId);
+                if (!sourceCoords || !targetCoords) return;
+
+                const [movedBlock] = State.pages[sourceCoords.pIdx].splice(sourceCoords.bIdx, 1);
+                
+                let insertIndex = targetCoords.bIdx;
+                if (sourceCoords.pIdx === targetCoords.pIdx && sourceCoords.bIdx < targetCoords.bIdx) insertIndex -= 1; 
+                if (insertAfter) insertIndex += 1;
+
+                State.pages[targetCoords.pIdx].splice(insertIndex, 0, movedBlock);
+                State.rebuildIndex(); // Re-index
+
+                Renderer.renderPage(sourceCoords.pIdx);
+                if (sourceCoords.pIdx !== targetCoords.pIdx) Renderer.renderPage(targetCoords.pIdx);
+                StorageManager.requestSave();
+            }
+        };
 
         // ==========================================
-        // ⌨️ EVENT LISTENERS
+        // ⌨️ EVENT CONTROLLER (Routing)
         // ==========================================
-        document.addEventListener('input', e => {
-            if(!e.target.classList.contains('bullet-text')) return;
-            
-            const listEl = e.target.closest('.bujo-list');
-            const pIdx = parseInt(listEl.dataset.idx);
-            const blockDiv = e.target.closest('.bullet-block');
-            const bIdx = pagesData[pIdx].findIndex(b => b.id === blockDiv.dataset.id);
-            const block = pagesData[pIdx][bIdx];
+        const EventController = {
+            init() {
+                document.addEventListener('input', this.handleInput);
+                document.addEventListener('keydown', this.handleKeydown);
+                document.addEventListener('mousedown', this.handleHandleMouseDown);
+                document.addEventListener('paste', this.handlePaste); // Prevent XSS formatting breaks
+                
+                document.addEventListener('dragstart', this.handleDragStart);
+                document.addEventListener('dragover', this.handleDragOver);
+                document.addEventListener('dragend', this.handleDragEnd);
 
-            block.text = e.target.textContent;
+                this.initScrubber();
+            },
 
-            for (const [prefix, type] of Object.entries(MD_MAP)) {
-                if (block.text.startsWith(prefix)) {
-                    setBlockType(pIdx, bIdx, type, block.text.substring(prefix.length));
-                    focusBlock(block.id, true);
+            handleInput(e) {
+                if(!e.target.classList.contains('bullet-text')) return;
+                const blockEl = e.target.closest('.bullet-block');
+                EditorEngine.updateText(blockEl.dataset.id, e.target.textContent, blockEl);
+            },
+
+            // Intercept paste to strip HTML and prevent raw DOM injection
+            handlePaste(e) {
+                if(!e.target.classList.contains('bullet-text')) return;
+                e.preventDefault();
+                const text = (e.originalEvent || e).clipboardData.getData('text/plain');
+                document.execCommand('insertText', false, text);
+            },
+
+            handleKeydown(e) {
+                const isEditing = e.target.classList.contains('bullet-text');
+                
+                if (!isEditing) {
+                    if (e.key === 'ArrowLeft') { e.preventDefault(); EditorEngine.changePage(-1); }
+                    if (e.key === 'ArrowRight') { e.preventDefault(); EditorEngine.changePage(1); }
                     return;
                 }
-            }
-            save(); 
-        });
 
-        document.addEventListener('keydown', e => {
-            const isEditing = e.target.classList.contains('bullet-text');
-            if (!isEditing) {
-                if (e.key === 'ArrowLeft') { e.preventDefault(); changePage(-1); }
-                if (e.key === 'ArrowRight') { e.preventDefault(); changePage(1); }
-                return;
-            }
+                if (e.key === 'Escape') { e.preventDefault(); e.target.blur(); return; }
 
-            if (e.key === 'Escape') { e.preventDefault(); e.target.blur(); return; }
+                const blockId = e.target.closest('.bullet-block').dataset.id;
 
-            const pIdx = parseInt(e.target.closest('.bujo-list').dataset.idx);
-            const blockDiv = e.target.closest('.bullet-block');
-            const bIdx = pagesData[pIdx].findIndex(b => b.id === blockDiv.dataset.id);
-            const block = pagesData[pIdx][bIdx];
-
-            if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); changePage(-1); return; }
-            if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); changePage(1); return; }
-            if (e.altKey && e.key === 'Enter') { e.preventDefault(); changePage(1); return; }
-            
-            if (e.ctrlKey && e.key === 'Enter') { 
-                e.preventDefault(); 
-                let currentIndex = CYCLE.indexOf(block.type);
-                setBlockType(pIdx, bIdx, currentIndex === -1 ? 'task' : CYCLE[(currentIndex + 1) % CYCLE.length]);
-                return; 
-            }
-
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                splitBlock(pIdx, bIdx, getCaretPos(e.target));
-                return;
-            }
-
-            if (e.key === 'Tab') {
-                e.preventDefault();
-                indentBlock(pIdx, bIdx, e.shiftKey ? -1 : 1);
-                return;
-            }
-            
-            if (e.key === 'Backspace' && getCaretPos(e.target) === 0) {
-                e.preventDefault();
-                if (block.type !== 'text') setBlockType(pIdx, bIdx, 'text');
-                else if (bIdx > 0) mergeBlocks(pIdx, bIdx);
-            }
-
-            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-                const sel = window.getSelection();
-                if (!sel.rangeCount) return;
-                const rect = sel.getRangeAt(0).getBoundingClientRect();
-                const elRect = e.target.getBoundingClientRect();
+                if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); EditorEngine.changePage(-1); return; }
+                if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); EditorEngine.changePage(1); return; }
+                if (e.altKey && e.key === 'Enter') { e.preventDefault(); EditorEngine.changePage(1); return; }
                 
-                if (e.key === 'ArrowUp' && (rect.top - elRect.top < 24)) {
-                    const prev = blockDiv.previousElementSibling;
-                    if (prev) { e.preventDefault(); focusBlock(prev.dataset.id, false); }
-                } else if (e.key === 'ArrowDown' && (elRect.bottom - rect.bottom < 24)) {
-                    const next = blockDiv.nextElementSibling;
-                    if (next) { e.preventDefault(); focusBlock(next.dataset.id, true); }
+                if (e.ctrlKey && e.key === 'Enter') { 
+                    e.preventDefault(); 
+                    EditorEngine.cycleType(blockId);
+                    return; 
                 }
-            }
-        });
 
-        // ==========================================
-        // ✋ DRAG & DROP & SCRUB
-        // ==========================================
-        let draggedId = null, sourcePIdx = null;
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    EditorEngine.splitBlock(blockId, SelectionManager.getCaretPos(e.target));
+                    return;
+                }
 
-        document.addEventListener('dragstart', e => {
-            const block = e.target.closest('.bullet-block');
-            if(block && block.getAttribute('draggable') === 'true') {
-                draggedId = block.dataset.id; sourcePIdx = parseInt(block.closest('.bujo-list').dataset.idx);
-                setTimeout(() => block.classList.add('dragging'), 0);
-            } else e.preventDefault(); 
-        });
+                if (e.key === 'Tab') {
+                    e.preventDefault();
+                    EditorEngine.indentBlock(blockId, e.shiftKey ? -1 : 1);
+                    return;
+                }
+                
+                if (e.key === 'Backspace' && SelectionManager.getCaretPos(e.target) === 0) {
+                    e.preventDefault();
+                    const coords = State.getBlockCoords(blockId);
+                    if (coords.block.type !== 'text') EditorEngine.setBlockType(blockId, 'text');
+                    else if (coords.bIdx > 0) EditorEngine.mergeWithPrevious(blockId);
+                }
 
-        document.addEventListener('dragover', e => {
-            e.preventDefault();
-            const target = e.target.closest('.bullet-block');
-            if(target && target.dataset.id !== draggedId) {
-                const rect = target.getBoundingClientRect();
-                const draggedEl = document.querySelector(`[data-id="${draggedId}"]`);
-                if (e.clientY > rect.top + rect.height / 2) target.parentNode.insertBefore(draggedEl, target.nextSibling);
-                else target.parentNode.insertBefore(draggedEl, target);
-            }
-        });
+                if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                    const sel = window.getSelection();
+                    if (!sel.rangeCount) return;
+                    const rect = sel.getRangeAt(0).getBoundingClientRect();
+                    const elRect = e.target.getBoundingClientRect();
+                    
+                    if (e.key === 'ArrowUp' && (rect.top - elRect.top < 24)) {
+                        e.preventDefault(); EditorEngine.navigateVertical(blockId, -1);
+                    } else if (e.key === 'ArrowDown' && (elRect.bottom - rect.bottom < 24)) {
+                        e.preventDefault(); EditorEngine.navigateVertical(blockId, 1);
+                    }
+                }
+            },
 
-        document.addEventListener('dragend', () => {
-            const el = document.querySelector(`[data-id="${draggedId}"]`);
-            if(el) {
-                el.classList.remove('dragging'); el.setAttribute('draggable', 'false'); 
-                const targetList = el.closest('.bujo-list');
-                if (targetList) {
-                    const targetPIdx = parseInt(targetList.dataset.idx);
-                    const allBlocks = pagesData.flat();
-                    const rebuildPage = (idx) => {
-                        const list = document.querySelector(`.bujo-list[data-idx="${idx}"]`);
-                        if (list) pagesData[idx] = Array.from(list.children).map(c => allBlocks.find(b => b.id === c.dataset.id));
+            handleHandleMouseDown(e) {
+                const handle = e.target.closest('.bullet-handle');
+                if (handle) {
+                    const block = handle.closest('.bullet-block');
+                    block.setAttribute('draggable', 'true');
+                    
+                    const cleanup = () => {
+                        block.setAttribute('draggable', 'false');
+                        document.removeEventListener('mouseup', cleanup);
+                        handle.removeEventListener('mouseleave', cleanup);
                     };
-                    rebuildPage(sourcePIdx);
-                    if (sourcePIdx !== targetPIdx) rebuildPage(targetPIdx);
+                    document.addEventListener('mouseup', cleanup);
+                    handle.addEventListener('mouseleave', cleanup);
                 }
+            },
+
+            draggedId: null,
+
+            handleDragStart(e) {
+                const block = e.target.closest('.bullet-block');
+                if(block && block.getAttribute('draggable') === 'true') {
+                    EventController.draggedId = block.dataset.id;
+                    Promise.resolve().then(() => block.classList.add('dragging'));
+                } else e.preventDefault(); 
+            },
+
+            handleDragOver(e) {
+                e.preventDefault();
+                const target = e.target.closest('.bullet-block');
+                const draggedId = EventController.draggedId;
+                if(target && target.dataset.id !== draggedId) {
+                    const rect = target.getBoundingClientRect();
+                    const draggedEl = document.querySelector(`[data-id="${draggedId}"]`);
+                    if (e.clientY > rect.top + rect.height / 2) target.parentNode.insertBefore(draggedEl, target.nextSibling);
+                    else target.parentNode.insertBefore(draggedEl, target);
+                }
+            },
+
+            handleDragEnd(e) {
+                const el = document.querySelector(`[data-id="${EventController.draggedId}"]`);
+                if(el) {
+                    el.classList.remove('dragging'); 
+                    el.setAttribute('draggable', 'false'); 
+                    
+                    const prev = el.previousElementSibling;
+                    const next = el.nextElementSibling;
+                    const targetList = el.closest('.bujo-list');
+                    
+                    if (targetList) {
+                        if (prev) EditorEngine.moveBlockDOM(EventController.draggedId, prev.dataset.id, true);
+                        else if (next) EditorEngine.moveBlockDOM(EventController.draggedId, next.dataset.id, false);
+                    }
+                }
+                EventController.draggedId = null;
+            },
+
+            initScrubber() {
+                const indicator = document.getElementById('page-indicator');
+                let isScrubbing = false;
+
+                const scrub = (e) => {
+                    const rect = indicator.getBoundingClientRect();
+                    const pairCount = Math.ceil(State.pages.length / 2);
+                    if (pairCount <= 1) return;
+                    let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+                    let index = Math.floor((x / rect.width) * pairCount);
+                    index = Math.min(index, pairCount - 1); 
+                    if (State.currentP !== index * 2) { 
+                        State.currentP = index * 2; 
+                        Renderer.updateViewport(); 
+                    }
+                };
+
+                indicator.addEventListener('pointerdown', e => { 
+                    isScrubbing = true; 
+                    document.getElementById('app').style.transitionDuration = '0s'; 
+                    indicator.setPointerCapture(e.pointerId); 
+                    scrub(e); 
+                });
+                indicator.addEventListener('pointermove', e => { if (isScrubbing) scrub(e); });
+                indicator.addEventListener('pointerup', e => { 
+                    isScrubbing = false; 
+                    document.getElementById('app').style.transitionDuration = ''; 
+                    indicator.releasePointerCapture(e.pointerId); 
+                    StorageManager.requestSave(); 
+                });
             }
-            save(); draggedId = null; sourcePIdx = null;
-        });
+        };
 
-        const indicator = document.getElementById('page-indicator');
-        let isScrubbing = false;
-
-        function handleScrub(e) {
-            const rect = indicator.getBoundingClientRect();
-            const pairCount = Math.ceil(pagesData.length / 2);
-            if (pairCount <= 1) return;
-            let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-            let index = Math.floor((x / rect.width) * pairCount);
-            index = Math.min(index, pairCount - 1); 
-            if (currentP !== index * 2) { currentP = index * 2; updateView(); }
+        // ==========================================
+        // 🚀 BOOTSTRAP
+        // ==========================================
+        async function startApp() {
+            await State.init();
+            Renderer.renderApp();
+            EventController.init();
         }
 
-        indicator.addEventListener('pointerdown', e => { isScrubbing = true; document.getElementById('app').style.transitionDuration = '0s'; indicator.setPointerCapture(e.pointerId); handleScrub(e); });
-        indicator.addEventListener('pointermove', e => { if (isScrubbing) handleScrub(e); });
-        indicator.addEventListener('pointerup', e => { isScrubbing = false; document.getElementById('app').style.transitionDuration = ''; indicator.releasePointerCapture(e.pointerId); save(); });
-
-        initApp();
+        startApp();
     </script>
 </body>
 </html>
