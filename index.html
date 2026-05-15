@@ -12,7 +12,6 @@
         @keyframes slideIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
         ::-webkit-scrollbar { display: none; }
         
-        /* ✨ Drag, Selection & Text Wrap Logic */
         .bullet-block { cursor: default; }
         .bullet-handle { cursor: grab; user-select: none; }
         .bullet-handle:active { cursor: grabbing; }
@@ -29,14 +28,12 @@
 </head>
 <body class="text-zinc-800">
 
-    <div id="app" class="flex transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] w-full h-screen will-change-transform">
-    </div>
-
+    <div id="app" class="flex transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] w-full h-screen will-change-transform"></div>
     <div id="page-indicator" class="fixed bottom-2 left-1/2 -translate-x-1/2 flex gap-3 z-50 p-4 cursor-grab active:cursor-grabbing touch-none"></div>
     
     <script>
         // ==========================================
-        // 💾 PERSISTENCE LAYER (Real Electron IPC)
+        // 💾 PERSISTENCE LAYER
         // ==========================================
         const FileSystemAPI = {
             async readJson(path) { return await window.electronAPI.readJson(path); },
@@ -47,86 +44,65 @@
         const StorageManager = {
             async loadNotebookMeta() {
                 const meta = await FileSystemAPI.readJson('meta.json');
-                
                 if (meta) {
-                    // 🚑 HEALER: Fix broken 'spread' state from previous bug!
                     if (meta.spreadOrder) {
-                        console.log("🩹 Healing broken meta state back to 'pages' abstraction...");
                         meta.pageOrder = meta.spreadOrder.map(id => id.replace('spread-', 'page-'));
                         delete meta.spreadOrder;
                     }
-                    
-                    meta.version = meta.version || 2;
-                    meta.currentP = meta.currentP || 0;
-                    meta.pageOrder = meta.pageOrder || [];
-                    meta.scrolls = meta.scrolls || []; // 📌 Init scroll memory
-                    
-                    return meta;
+                    return { version: 2, currentP: 0, pageOrder: [], scrolls: [], ...meta };
                 }
-                
                 return { version: 2, currentP: 0, pageOrder: [], scrolls: [] };
             },
-            async saveNotebookMeta(metaData) {
-                await FileSystemAPI.writeJsonAtomic('meta.json', metaData);
-            },
-            async loadPage(pageId) {
-                const data = await FileSystemAPI.readJson(`pages/${pageId}.json`);
-                return data || [createBlock()]; 
-            },
-            async savePage(pageId, pageData) {
-                await FileSystemAPI.writeJsonAtomic(`pages/${pageId}.json`, pageData);
-            },
-            async trashPage(pageId) {
-                await FileSystemAPI.trashJson(`pages/${pageId}.json`);
-            }
+            async saveNotebookMeta(metaData) { await FileSystemAPI.writeJsonAtomic('meta.json', metaData); },
+            async loadPage(pageId) { return (await FileSystemAPI.readJson(`pages/${pageId}.json`)) || [createBlock()]; },
+            async savePage(pageId, pageData) { await FileSystemAPI.writeJsonAtomic(`pages/${pageId}.json`, pageData); },
+            async trashPage(pageId) { await FileSystemAPI.trashJson(`pages/${pageId}.json`); }
         };
 
         // ==========================================
-        // 🧠 CONFIG & IN-MEMORY STATE
+        // 🧠 STATE & CONFIG
         // ==========================================
         const BULLETS = { task: '•', completed: '✕', migrated: '>', scheduled: '<', event: '○', note: '-' };
         const CYCLE = ['task', 'completed', 'migrated', 'scheduled', 'event', 'note'];
         const MD_MAP = {'* ': 'task', 'x ': 'completed', '> ': 'migrated', '< ': 'scheduled', 'o ': 'event', '- ': 'note', '# ': 'h1', '## ': 'h2', '### ': 'h3', '#### ': 'h4', '##### ': 'h5', '###### ': 'h6'};
 
-        // App State (Unified 'Page' Abstraction 📖)
         let metaData = { version: 2, currentP: 0, pageOrder: [], scrolls: [] };
         let pagesData = []; 
         let currentP = 0;   
         let saveTimeout = null;
-        let scrollTimeout = null;
 
-        // ==========================================
-        // 🛠️ UTILS & DATA MANAGEMENT
-        // ==========================================
-        function createBlock(text = '', depth = 0, type = 'text') { 
-            return { id: crypto.randomUUID(), type, text, depth }; 
-        }
+        function createBlock(text = '', depth = 0, type = 'text') { return { id: crypto.randomUUID(), type, text, depth }; }
 
         async function initApp() {
             metaData = await StorageManager.loadNotebookMeta();
-            
             if (metaData.pageOrder.length === 0) {
                 metaData.pageOrder.push(`page-${crypto.randomUUID()}`, `page-${crypto.randomUUID()}`);
                 await StorageManager.saveNotebookMeta(metaData);
             }
-
-            pagesData = await Promise.all(
-                metaData.pageOrder.map(id => StorageManager.loadPage(id))
-            );
-
+            pagesData = await Promise.all(metaData.pageOrder.map(id => StorageManager.loadPage(id)));
             currentP = metaData.currentP || 0;
             renderApp();
         }
-        
+
+        async function save(forceRender = false) { 
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(async () => {
+                const layoutChanged = await cleanEmptySpreads();
+                const activePair = Math.floor(currentP / 2) * 2;
+                if(metaData.pageOrder[activePair]) await StorageManager.savePage(metaData.pageOrder[activePair], pagesData[activePair]);
+                if(metaData.pageOrder[activePair + 1]) await StorageManager.savePage(metaData.pageOrder[activePair + 1], pagesData[activePair + 1]);
+                
+                metaData.currentP = currentP;
+                await StorageManager.saveNotebookMeta(metaData);
+                if (layoutChanged || forceRender) renderApp();
+                else renderIndicator(); 
+            }, 500); 
+        }
+
         async function cleanEmptySpreads() {
             let layoutChanged = false;
-            
-            // 🧹 Smarter Cleanup: Only trim completely empty spreads from the END of the notebook.
-            // This safely preserves intentional blank spreads placed in the middle!
             while (pagesData.length > 2) {
                 const i = pagesData.length - 2;
-                
-                // 🛡️ Never delete the spread the user is currently viewing!
                 if (Math.floor(i / 2) === Math.floor(currentP / 2)) break;
 
                 const p1Empty = pagesData[i].every(b => b.text.trim() === '' && b.type === 'text');
@@ -135,49 +111,175 @@
                 if (p1Empty && p2Empty) {
                     await StorageManager.trashPage(metaData.pageOrder[i]);
                     await StorageManager.trashPage(metaData.pageOrder[i+1]);
-
-                    pagesData.splice(i, 2);
-                    metaData.pageOrder.splice(i, 2);
-                    metaData.scrolls.splice(i, 2); // 📌 Clean up scroll memory too
-                    
+                    pagesData.splice(i, 2); metaData.pageOrder.splice(i, 2); metaData.scrolls.splice(i, 2);
                     layoutChanged = true;
-                } else {
-                    break; // 🛑 Hit a spread with content, stop trimming!
-                }
+                } else break;
             }
-
-            // Fallback safety if currentP got left out of bounds
-            if (currentP >= pagesData.length) {
-                currentP = Math.max(0, pagesData.length - 2);
-                layoutChanged = true;
-            }
-
-            if (layoutChanged) {
-                metaData.currentP = currentP;
-                await StorageManager.saveNotebookMeta(metaData);
-            }
+            if (currentP >= pagesData.length) { currentP = Math.max(0, pagesData.length - 2); layoutChanged = true; }
             return layoutChanged;
         }
 
-        async function save(forceRender = false) { 
-            clearTimeout(saveTimeout);
-            saveTimeout = setTimeout(async () => {
-                const layoutChanged = await cleanEmptySpreads();
-                
-                const activePair = Math.floor(currentP / 2) * 2;
-                if(metaData.pageOrder[activePair]) {
-                    await StorageManager.savePage(metaData.pageOrder[activePair], pagesData[activePair]);
-                }
-                if(metaData.pageOrder[activePair + 1]) {
-                    await StorageManager.savePage(metaData.pageOrder[activePair + 1], pagesData[activePair + 1]);
-                }
-                
-                metaData.currentP = currentP;
-                await StorageManager.saveNotebookMeta(metaData);
+        function updateScroll(idx, top) { metaData.scrolls[idx] = top; save(); }
 
-                if (layoutChanged || forceRender) renderApp();
-                else renderIndicator(); 
-            }, 500); 
+        // ==========================================
+        // 🎨 RENDERING
+        // ==========================================
+        function renderApp() {
+            if (pagesData.length % 2 !== 0) {
+                metaData.pageOrder.push(`page-${crypto.randomUUID()}`);
+                pagesData.push([createBlock()]);
+            }
+
+            document.getElementById('app').innerHTML = pagesData.map((p, i) => `
+                <div class="w-[50vw] h-screen flex-shrink-0 relative flex justify-center ${i % 2 === 0 ? 'border-r border-dashed border-zinc-300' : ''}">
+                    <div class="w-full h-full overflow-y-auto px-10 pt-24 pb-32 flex justify-center scroll-container" data-idx="${i}" onscroll="updateScroll(${i}, this.scrollTop)">
+                        <div class="w-full max-w-md bujo-list relative min-h-[50vh]" data-idx="${i}"></div>
+                    </div>
+                    <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">${i + 1}</div>
+                </div>
+            `).join('');
+            
+            pagesData.forEach((_, i) => {
+                renderPage(i);
+                const container = document.querySelector(`.scroll-container[data-idx="${i}"]`);
+                if (container && metaData.scrolls[i]) container.scrollTop = metaData.scrolls[i];
+            });
+            updateView();
+        }
+
+        function renderPage(pIdx) {
+            const list = document.querySelector(`.bujo-list[data-idx="${pIdx}"]`);
+            if(!list) return;
+            
+            list.innerHTML = pagesData[pIdx].map(b => {
+                let textClass = getBlockClasses(b);
+                const isBullet = CYCLE.includes(b.type);
+                const symbol = isBullet ? BULLETS[b.type] : ''; 
+
+                return `
+                <div class="relative flex items-start mb-2 bullet-block group" data-id="${b.id}" style="margin-left: ${b.depth * 28}px">
+                    <div class="absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isBullet ? 'opacity-40 text-zinc-500' : 'opacity-0 text-zinc-300'} group-hover:opacity-100 hover:!text-black font-bold transition-all" 
+                         onmousedown="this.parentElement.setAttribute('draggable', 'true')" 
+                         onmouseup="this.parentElement.setAttribute('draggable', 'false')"
+                         onmouseleave="this.parentElement.setAttribute('draggable', 'false')">
+                        ${symbol || '::'} 
+                    </div>
+                    <div class="${textClass}" contenteditable="true" spellcheck="false">${b.text}</div>
+                </div>`;
+            }).join('');
+        }
+
+        function updateSingleBlockDOM(pIdx, bIdx) {
+            const block = pagesData[pIdx][bIdx];
+            const blockEl = document.querySelector(`[data-id="${block.id}"]`);
+            if (!blockEl) return;
+
+            blockEl.style.marginLeft = `${block.depth * 28}px`;
+
+            const isBullet = CYCLE.includes(block.type);
+            const handleEl = blockEl.querySelector('.bullet-handle');
+            handleEl.className = `absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isBullet ? 'opacity-40 text-zinc-500' : 'opacity-0 text-zinc-300'} group-hover:opacity-100 hover:!text-black font-bold transition-all`;
+            handleEl.innerHTML = isBullet ? BULLETS[block.type] : '::';
+
+            const textEl = blockEl.querySelector('.bullet-text');
+            textEl.className = getBlockClasses(block);
+            if (textEl.textContent !== block.text) textEl.textContent = block.text;
+        }
+
+        function getBlockClasses(b) {
+            let cls = "flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ";
+            const styles = { 'h1': "text-4xl font-bold mt-6 mb-2 ", 'h2': "text-3xl font-bold mt-5 mb-2 ", 'h3': "text-2xl font-bold mt-4 mb-1 ", 'h4': "text-xl font-semibold mt-3 mb-1 ", 'h5': "text-lg font-semibold mt-2 mb-1 ", 'h6': "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500 " };
+            cls += styles[b.type] || "text-[1.05rem] leading-relaxed ";
+            if (b.type === 'completed') cls += "line-through text-zinc-400 opacity-60";
+            else if (['migrated', 'scheduled'].includes(b.type)) cls += "italic text-zinc-500";
+            return cls;
+        }
+
+        function updateView() {
+            document.getElementById('app').style.transform = `translateX(-${currentP * 50}vw)`;
+            renderIndicator();
+        }
+
+        function renderIndicator() {
+            const activePair = Math.floor(currentP / 2);
+            document.getElementById('page-indicator').innerHTML = Array.from({length: Math.ceil(pagesData.length / 2)}).map((_, i) => 
+                `<span onclick="jumpToPair(${i})" class="pointer-events-none h-2 rounded-full transition-all duration-300 ${i === activePair ? 'w-6 bg-zinc-800' : 'w-2 bg-zinc-300 hover:bg-zinc-400'}"></span>`
+            ).join('');
+        }
+
+        // ==========================================
+        // 🛠️ COMMAND OPERATIONS
+        // ==========================================
+        function indentBlock(pIdx, bIdx, direction) {
+            pagesData[pIdx][bIdx].depth = Math.max(0, Math.min(4, pagesData[pIdx][bIdx].depth + direction));
+            updateSingleBlockDOM(pIdx, bIdx);
+            save();
+        }
+
+        function setBlockType(pIdx, bIdx, newType, newText = null) {
+            const block = pagesData[pIdx][bIdx];
+            block.type = newType;
+            if (newText !== null) block.text = newText;
+            updateSingleBlockDOM(pIdx, bIdx);
+            save();
+        }
+
+        function splitBlock(pIdx, bIdx, caretPos) {
+            const pageList = pagesData[pIdx];
+            const block = pageList[bIdx];
+            const txt = block.text;
+            block.text = txt.slice(0, caretPos);
+            
+            const newType = block.type.startsWith('h') ? 'text' : block.type;
+            const newBlock = createBlock(txt.slice(caretPos), block.depth, newType);
+            
+            pageList.splice(bIdx + 1, 0, newBlock);
+            updateSingleBlockDOM(pIdx, bIdx); 
+            renderPage(pIdx); 
+            focusBlock(newBlock.id, true);
+            save();
+        }
+
+        function mergeBlocks(pIdx, bIdx) {
+            const pageList = pagesData[pIdx];
+            const block = pageList[bIdx];
+            const prevBlock = pageList[bIdx - 1];
+            
+            const prevLength = prevBlock.text.length;
+            prevBlock.text += block.text;
+            pageList.splice(bIdx, 1);
+            
+            renderPage(pIdx);
+            save();
+            
+            setTimeout(() => {
+                const el = document.querySelector(`[data-id="${prevBlock.id}"] .bullet-text`);
+                if (!el) return;
+                el.focus();
+                const sel = window.getSelection();
+                const range = document.createRange();
+                if (el.firstChild) range.setStart(el.firstChild, prevLength);
+                else range.setStart(el, 0);
+                range.collapse(true);
+                sel.removeAllRanges(); sel.addRange(range);
+            }, 10);
+        }
+
+        // ==========================================
+        // 🕹️ NAVIGATION & UTILS
+        // ==========================================
+        function jumpToPair(pairIdx) { currentP = pairIdx * 2; updateView(); save(); }
+
+        async function changePage(dir) {
+            const nextP = currentP + dir * 2;
+            if (nextP < 0) return;
+            if (nextP >= pagesData.length) {
+                metaData.pageOrder.push(`page-${crypto.randomUUID()}`, `page-${crypto.randomUUID()}`);
+                pagesData.push([createBlock()], [createBlock()]);
+                await StorageManager.saveNotebookMeta(metaData);
+                renderApp();
+            }
+            currentP = nextP; updateView(); save();
         }
 
         function getCaretPos(el) { 
@@ -203,121 +305,6 @@
                 sel.removeAllRanges(); sel.addRange(range);
             }, 10);
         }
-        
-        // 📌 Sticky Scroll Memory
-        function updateScroll(idx, top) {
-            metaData.scrolls[idx] = top;
-            clearTimeout(scrollTimeout);
-            scrollTimeout = setTimeout(() => {
-                StorageManager.saveNotebookMeta(metaData);
-            }, 1000);
-        }
-
-        // ==========================================
-        // 🎨 RENDERING
-        // ==========================================
-        function renderApp() {
-            if (pagesData.length % 2 !== 0) {
-                const newId = `page-${crypto.randomUUID()}`;
-                metaData.pageOrder.push(newId);
-                pagesData.push([createBlock()]);
-                StorageManager.saveNotebookMeta(metaData);
-            }
-
-            const app = document.getElementById('app');
-            app.innerHTML = pagesData.map((p, i) => `
-                <div class="w-[50vw] h-screen flex-shrink-0 relative flex justify-center ${i % 2 === 0 ? 'border-r border-dashed border-zinc-300' : ''}">
-                    <div class="w-full h-full overflow-y-auto px-10 pt-24 pb-32 flex justify-center scroll-container" data-idx="${i}" onscroll="updateScroll(${i}, this.scrollTop)">
-                        <div class="w-full max-w-md bujo-list relative min-h-[50vh]" data-idx="${i}"></div>
-                    </div>
-                    <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">${i + 1}</div>
-                </div>
-            `).join('');
-            
-            pagesData.forEach((_, i) => {
-                renderPage(i);
-                // 📌 Restore Scroll Position
-                const container = document.querySelector(`.scroll-container[data-idx="${i}"]`);
-                if (container && metaData.scrolls[i]) {
-                    container.scrollTop = metaData.scrolls[i];
-                }
-            });
-            updateView();
-        }
-
-        function renderPage(pIdx) {
-            const list = document.querySelector(`.bujo-list[data-idx="${pIdx}"]`);
-            if(!list) return;
-            
-            list.innerHTML = pagesData[pIdx].map(b => {
-                let textClass = "flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ";
-                const styles = {
-                    'h1': "text-4xl font-bold mt-6 mb-2 ", 'h2': "text-3xl font-bold mt-5 mb-2 ", 'h3': "text-2xl font-bold mt-4 mb-1 ",
-                    'h4': "text-xl font-semibold mt-3 mb-1 ", 'h5': "text-lg font-semibold mt-2 mb-1 ", 'h6': "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500 "
-                };
-                textClass += styles[b.type] || "text-[1.05rem] leading-relaxed ";
-
-                if (b.type === 'completed') textClass += "line-through text-zinc-400 opacity-60";
-                else if (['migrated', 'scheduled'].includes(b.type)) textClass += "italic text-zinc-500";
-
-                const isBullet = CYCLE.includes(b.type);
-                const symbol = isBullet ? BULLETS[b.type] : ''; 
-
-                return `
-                <div class="relative flex items-start mb-2 bullet-block group" data-id="${b.id}" style="margin-left: ${b.depth * 28}px">
-                    <div class="absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isBullet ? 'opacity-40 text-zinc-500' : 'opacity-0 text-zinc-300'} group-hover:opacity-100 hover:!text-black font-bold transition-all" 
-                         onmousedown="this.parentElement.setAttribute('draggable', 'true')" 
-                         onmouseup="this.parentElement.setAttribute('draggable', 'false')"
-                         onmouseleave="this.parentElement.setAttribute('draggable', 'false')">
-                        ${symbol || '::'} 
-                    </div>
-                    <div class="${textClass}" contenteditable="true" spellcheck="false">${b.text}</div>
-                </div>`;
-            }).join('');
-        }
-
-        function updateView() {
-            document.getElementById('app').style.transform = `translateX(-${currentP * 50}vw)`;
-            renderIndicator();
-        }
-
-        function renderIndicator() {
-            const pairCount = Math.ceil(pagesData.length / 2);
-            const activePair = Math.floor(currentP / 2);
-            document.getElementById('page-indicator').innerHTML = Array.from({length: pairCount}).map((_, i) => 
-                `<span onclick="jumpToPair(${i})" class="pointer-events-none h-2 rounded-full transition-all duration-300 ${i === activePair ? 'w-6 bg-zinc-800' : 'w-2 bg-zinc-300 hover:bg-zinc-400'}"></span>`
-            ).join('');
-        }
-
-        // ==========================================
-        // 🕹️ NAVIGATION & INTERACTIONS
-        // ==========================================
-        function jumpToPair(pairIdx) {
-            currentP = pairIdx * 2;
-            updateView(); save();
-        }
-
-        async function changePage(dir) {
-            const nextP = currentP + dir * 2;
-            if (nextP < 0) return;
-            if (nextP >= pagesData.length) {
-                const id1 = `page-${crypto.randomUUID()}`;
-                const id2 = `page-${crypto.randomUUID()}`;
-                metaData.pageOrder.push(id1, id2);
-                pagesData.push([createBlock()], [createBlock()]);
-                
-                await StorageManager.saveNotebookMeta(metaData);
-                renderApp();
-            }
-            currentP = nextP;
-            updateView(); save();
-        }
-
-        function cycleType(block, pIdx) {
-            let currentIndex = CYCLE.indexOf(block.type);
-            block.type = currentIndex === -1 ? 'task' : CYCLE[(currentIndex + 1) % CYCLE.length];
-            save(); renderPage(pIdx); focusBlock(block.id);
-        }
 
         // ==========================================
         // ⌨️ EVENT LISTENERS
@@ -325,15 +312,18 @@
         document.addEventListener('input', e => {
             if(!e.target.classList.contains('bullet-text')) return;
             
-            const pIdx = parseInt(e.target.closest('.bujo-list').dataset.idx);
-            const block = pagesData[pIdx].find(b => b.id === e.target.closest('.bullet-block').dataset.id);
+            const listEl = e.target.closest('.bujo-list');
+            const pIdx = parseInt(listEl.dataset.idx);
+            const blockDiv = e.target.closest('.bullet-block');
+            const bIdx = pagesData[pIdx].findIndex(b => b.id === blockDiv.dataset.id);
+            const block = pagesData[pIdx][bIdx];
+
             block.text = e.target.textContent;
 
             for (const [prefix, type] of Object.entries(MD_MAP)) {
-                if (e.target.textContent.startsWith(prefix)) {
-                    block.type = type;
-                    block.text = e.target.textContent.substring(prefix.length);
-                    save(); renderPage(pIdx); focusBlock(block.id, true);
+                if (block.text.startsWith(prefix)) {
+                    setBlockType(pIdx, bIdx, type, block.text.substring(prefix.length));
+                    focusBlock(block.id, true);
                     return;
                 }
             }
@@ -342,7 +332,6 @@
 
         document.addEventListener('keydown', e => {
             const isEditing = e.target.classList.contains('bullet-text');
-            
             if (!isEditing) {
                 if (e.key === 'ArrowLeft') { e.preventDefault(); changePage(-1); }
                 if (e.key === 'ArrowRight') { e.preventDefault(); changePage(1); }
@@ -353,65 +342,41 @@
 
             const pIdx = parseInt(e.target.closest('.bujo-list').dataset.idx);
             const blockDiv = e.target.closest('.bullet-block');
-            const pageList = pagesData[pIdx];
-            const bIdx = pageList.findIndex(b => b.id === blockDiv.dataset.id);
-            const block = pageList[bIdx];
+            const bIdx = pagesData[pIdx].findIndex(b => b.id === blockDiv.dataset.id);
+            const block = pagesData[pIdx][bIdx];
 
-            // 🚀 Navigation from within edit blocks!
             if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); changePage(-1); return; }
             if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); changePage(1); return; }
             if (e.altKey && e.key === 'Enter') { e.preventDefault(); changePage(1); return; }
             
-            if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); cycleType(block, pIdx); return; }
+            if (e.ctrlKey && e.key === 'Enter') { 
+                e.preventDefault(); 
+                let currentIndex = CYCLE.indexOf(block.type);
+                setBlockType(pIdx, bIdx, currentIndex === -1 ? 'task' : CYCLE[(currentIndex + 1) % CYCLE.length]);
+                return; 
+            }
 
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                const caret = getCaretPos(e.target);
-                const txt = e.target.textContent;
-                block.text = txt.slice(0, caret);
-                const newType = block.type.startsWith('h') ? 'text' : block.type;
-                const newBlock = createBlock(txt.slice(caret), block.depth, newType);
-                pageList.splice(bIdx + 1, 0, newBlock);
-                save(); renderPage(pIdx); focusBlock(newBlock.id, true);
+                splitBlock(pIdx, bIdx, getCaretPos(e.target));
                 return;
             }
 
             if (e.key === 'Tab') {
                 e.preventDefault();
-                block.depth = Math.max(0, Math.min(4, block.depth + (e.shiftKey ? -1 : 1)));
-                save(); renderPage(pIdx); focusBlock(block.id);
+                indentBlock(pIdx, bIdx, e.shiftKey ? -1 : 1);
                 return;
             }
             
             if (e.key === 'Backspace' && getCaretPos(e.target) === 0) {
-                if (block.type !== 'text') {
-                    e.preventDefault(); block.type = 'text'; save(); renderPage(pIdx); focusBlock(block.id);
-                } else if (bIdx > 0) {
-                    e.preventDefault();
-                    const prevBlock = pageList[bIdx - 1];
-                    const prevLength = prevBlock.text.length;
-                    prevBlock.text += block.text;
-                    pageList.splice(bIdx, 1);
-                    save(); renderPage(pIdx);
-                    
-                    setTimeout(() => {
-                        const el = document.querySelector(`[data-id="${prevBlock.id}"] .bullet-text`);
-                        if (!el) return;
-                        el.focus();
-                        const sel = window.getSelection();
-                        const range = document.createRange();
-                        if (el.firstChild) range.setStart(el.firstChild, prevLength);
-                        else range.setStart(el, 0);
-                        range.collapse(true);
-                        sel.removeAllRanges(); sel.addRange(range);
-                    }, 10);
-                }
+                e.preventDefault();
+                if (block.type !== 'text') setBlockType(pIdx, bIdx, 'text');
+                else if (bIdx > 0) mergeBlocks(pIdx, bIdx);
             }
 
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 const sel = window.getSelection();
                 if (!sel.rangeCount) return;
-                
                 const rect = sel.getRangeAt(0).getBoundingClientRect();
                 const elRect = e.target.getBoundingClientRect();
                 
@@ -426,20 +391,16 @@
         });
 
         // ==========================================
-        // ✋ DRAG & DROP
+        // ✋ DRAG & DROP & SCRUB
         // ==========================================
-        let draggedId = null;
-        let sourcePIdx = null;
+        let draggedId = null, sourcePIdx = null;
 
         document.addEventListener('dragstart', e => {
             const block = e.target.closest('.bullet-block');
             if(block && block.getAttribute('draggable') === 'true') {
-                draggedId = block.dataset.id;
-                sourcePIdx = parseInt(block.closest('.bujo-list').dataset.idx); // ⚡ Tag the source list!
+                draggedId = block.dataset.id; sourcePIdx = parseInt(block.closest('.bujo-list').dataset.idx);
                 setTimeout(() => block.classList.add('dragging'), 0);
-            } else { 
-                e.preventDefault(); 
-            }
+            } else e.preventDefault(); 
         });
 
         document.addEventListener('dragover', e => {
@@ -456,34 +417,22 @@
         document.addEventListener('dragend', () => {
             const el = document.querySelector(`[data-id="${draggedId}"]`);
             if(el) {
-                el.classList.remove('dragging');
-                el.setAttribute('draggable', 'false'); 
-                
+                el.classList.remove('dragging'); el.setAttribute('draggable', 'false'); 
                 const targetList = el.closest('.bujo-list');
                 if (targetList) {
                     const targetPIdx = parseInt(targetList.dataset.idx);
                     const allBlocks = pagesData.flat();
-                    
-                    // ⚡ Targeted Array Rebuild: Only map the affected pages, ignoring the rest!
                     const rebuildPage = (idx) => {
                         const list = document.querySelector(`.bujo-list[data-idx="${idx}"]`);
-                        if (list) {
-                            pagesData[idx] = Array.from(list.children).map(c => allBlocks.find(b => b.id === c.dataset.id));
-                        }
+                        if (list) pagesData[idx] = Array.from(list.children).map(c => allBlocks.find(b => b.id === c.dataset.id));
                     };
-                    
                     rebuildPage(sourcePIdx);
                     if (sourcePIdx !== targetPIdx) rebuildPage(targetPIdx);
                 }
             }
-            save(); 
-            draggedId = null;
-            sourcePIdx = null;
+            save(); draggedId = null; sourcePIdx = null;
         });
 
-        // ==========================================
-        // 🎚️ SCRUBBING
-        // ==========================================
         const indicator = document.getElementById('page-indicator');
         let isScrubbing = false;
 
@@ -491,36 +440,16 @@
             const rect = indicator.getBoundingClientRect();
             const pairCount = Math.ceil(pagesData.length / 2);
             if (pairCount <= 1) return;
-
             let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
             let index = Math.floor((x / rect.width) * pairCount);
             index = Math.min(index, pairCount - 1); 
-
-            if (currentP !== index * 2) {
-                currentP = index * 2;
-                updateView();
-            }
+            if (currentP !== index * 2) { currentP = index * 2; updateView(); }
         }
 
-        indicator.addEventListener('pointerdown', e => {
-            isScrubbing = true;
-            document.getElementById('app').style.transitionDuration = '0s'; 
-            indicator.setPointerCapture(e.pointerId);
-            handleScrub(e);
-        });
+        indicator.addEventListener('pointerdown', e => { isScrubbing = true; document.getElementById('app').style.transitionDuration = '0s'; indicator.setPointerCapture(e.pointerId); handleScrub(e); });
+        indicator.addEventListener('pointermove', e => { if (isScrubbing) handleScrub(e); });
+        indicator.addEventListener('pointerup', e => { isScrubbing = false; document.getElementById('app').style.transitionDuration = ''; indicator.releasePointerCapture(e.pointerId); save(); });
 
-        indicator.addEventListener('pointermove', e => {
-            if (isScrubbing) handleScrub(e);
-        });
-
-        indicator.addEventListener('pointerup', e => {
-            isScrubbing = false;
-            document.getElementById('app').style.transitionDuration = ''; 
-            indicator.releasePointerCapture(e.pointerId);
-            save();
-        });
-
-        // 🚀 Kickoff
         initApp();
     </script>
 </body>
