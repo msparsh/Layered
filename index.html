@@ -656,8 +656,7 @@ const RegionManager = {
     let el = Utils.qs(`[data-region-id="${r.id}"]`);
     if (!el) {
       el = document.createElement('div');
-      el.className = "region-box absolute bg-white/95 backdrop-blur-sm shadow-md border border-zinc-200/80 rounded-lg flex flex-col layer-paper";
-      el.dataset.regionId = r.id; el.dataset.pageId = r.pageId;
+      el.className = "region-box absolute bg-transparent hover:bg-white/40 border border-transparent hover:border-zinc-200 transition-all duration-300 rounded-lg flex flex-col layer-paper";      el.dataset.regionId = r.id; el.dataset.pageId = r.pageId;
       el.innerHTML = UI.generateRegionBoxHTML(r);
       wrapper.appendChild(el);
     }
