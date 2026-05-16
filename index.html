@@ -1,1060 +1,1030 @@
 <!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Minimalist Bujo - Spread 📖</title>
-        <script src="https://cdn.tailwindcss.com"></script>
-        <style>
-            /* 🪄 Switched scrolling to the body to prevent clipping! */
-            body { overflow-x: hidden; overflow-y: auto; background-color: #fafafa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-            [contenteditable]:empty::before { content: "\FEFF"; }
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Minimalist Bujo - Spread 📖</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* 🪄 Switched scrolling to the body to prevent clipping! */
+      body { overflow-x: hidden; overflow-y: auto; background-color: #fafafa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      [contenteditable]:empty::before { content: "\FEFF"; }
 
+      .bullet-block { animation: slideIn 0.15s ease-out forwards; cursor: default; }
+      @keyframes slideIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+      ::-webkit-scrollbar { display: none; }
+      .bullet-handle { cursor: grab; user-select: none; }
+      .bullet-handle:active { cursor: grabbing; }
+      .dragging { opacity: 0.3; }
+      .bullet-text { cursor: text; user-select: text; word-break: break-word; -webkit-hyphens: auto; hyphens: auto; }
+      .region-content::-webkit-scrollbar { display: none; }
 
-            .bullet-block { animation: slideIn 0.15s ease-out forwards; cursor: default; }
-            @keyframes slideIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-            ::-webkit-scrollbar { display: none; }
-            .bullet-handle { cursor: grab; user-select: none; }
-            .bullet-handle:active { cursor: grabbing; }
-            .dragging { opacity: 0.3; }
-            .bullet-text { cursor: text; user-select: text; word-break: break-word; -webkit-hyphens: auto; hyphens: auto; }
-            .region-content::-webkit-scrollbar { display: none; }
+      /* 📸 Draggable Image Styles */
+      .draggable-image { position: absolute; top: 0; left: 0; cursor: grab; max-width: 300px; filter: drop-shadow(0px 8px 12px rgba(0, 0, 0, 0.15)); user-select: none; transition: scale 0.2s ease, rotate 0.2s ease, opacity 0.2s ease; }
+      .draggable-image:active { cursor: grabbing; }
+      .draggable-image[data-locked="true"] { cursor: default; }
+      .draggable-image[data-locked="true"]:active { cursor: default; }
+      .layer-background { z-index: 10; }
+      .layer-paper { z-index: 20; }
+      .layer-sticker { z-index: 30; }
+      .layer-floating { z-index: 40; }
+      .layer-focus { z-index: 50; }
+    </style>
+  </head>
+  <body class="text-zinc-800">
+    <button id="sticker-toggle" class="fixed top-6 right-6 w-12 h-12 bg-white rounded-full shadow-lg text-2xl z-[60] hover:scale-110 transition-transform flex items-center justify-center border border-zinc-100">🎒</button>
 
-            /* 📸 Draggable Image Styles */
-            .draggable-image { position: absolute; top: 0; left: 0; cursor: grab; max-width: 300px; filter: drop-shadow(0px 8px 12px rgba(0, 0, 0, 0.15)); user-select: none; transition: scale 0.2s ease, rotate 0.2s ease, opacity 0.2s ease; }
-            .draggable-image:active { cursor: grabbing; }
-            .draggable-image[data-locked="true"] { cursor: default; }
-            .draggable-image[data-locked="true"]:active { cursor: default; }
-            .layer-background { z-index: 10; }
-            .layer-paper { z-index: 20; }
-            .layer-sticker { z-index: 30; }
-            .layer-floating { z-index: 40; }
-            .layer-focus { z-index: 50; }
-        </style>
-    </head>
-    <body class="text-zinc-800">
-        <button id="sticker-toggle" class="fixed top-6 right-6 w-12 h-12 bg-white rounded-full shadow-lg text-2xl z-[60] hover:scale-110 transition-transform flex items-center justify-center border border-zinc-100">🎒</button>
+    <div id="sticker-drawer" class="fixed top-0 right-0 w-80 h-screen bg-zinc-50 shadow-2xl z-[50] transform translate-x-full transition-transform duration-300 ease-out border-l border-zinc-200 p-6 overflow-y-auto">
+      <h2 class="text-2xl font-bold mb-2 mt-16 text-zinc-800">Stickers 🌟</h2>
+      <p class="text-xs text-zinc-500 mb-6 leading-relaxed">Double-click any floating image on your page to save it here! Or upload new ones directly 👇</p>
+      <label class="block w-full cursor-pointer bg-zinc-800 text-white hover:bg-zinc-700 text-center py-3 rounded-lg font-semibold text-sm mb-6 transition-colors shadow-md">
+        ➕ Upload Sticker
+        <input type="file" id="sticker-upload" accept="image/*" class="hidden" />
+      </label>
+      <div id="sticker-grid" class="grid grid-cols-2 gap-4"></div>
+    </div>
 
-        <div id="sticker-drawer" class="fixed top-0 right-0 w-80 h-screen bg-zinc-50 shadow-2xl z-[50] transform translate-x-full transition-transform duration-300 ease-out border-l border-zinc-200 p-6 overflow-y-auto">
-            <h2 class="text-2xl font-bold mb-2 mt-16 text-zinc-800">Stickers 🌟</h2>
-            <p class="text-xs text-zinc-500 mb-6 leading-relaxed">Double-click any floating image on your page to save it here! Or upload new ones directly 👇</p>
-            <label class="block w-full cursor-pointer bg-zinc-800 text-white hover:bg-zinc-700 text-center py-3 rounded-lg font-semibold text-sm mb-6 transition-colors shadow-md">
-                ➕ Upload Sticker
-                <input type="file" id="sticker-upload" accept="image/*" class="hidden" />
-            </label>
-            <div id="sticker-grid" class="grid grid-cols-2 gap-4"></div>
-        </div>
+    <div id="app" class="flex transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] w-full min-h-screen will-change-transform relative items-start"></div>
+    <div id="page-indicator" class="fixed bottom-2 left-1/2 -translate-x-1/2 flex gap-3 z-50 p-4 cursor-grab active:cursor-grabbing touch-none"></div>
 
-        <div id="app" class="flex transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] w-full min-h-screen will-change-transform relative items-start"></div>
-        <div id="page-indicator" class="fixed bottom-2 left-1/2 -translate-x-1/2 flex gap-3 z-50 p-4 cursor-grab active:cursor-grabbing touch-none"></div>
+    <script>
+      const qs = s => document.querySelector(s);
+      const qsa = s => document.querySelectorAll(s);
+      const gid = id => document.getElementById(id);
+const api = window.electronAPI;
+      const memFs = new Map(); // In-memory fallback for web-testing! 🧠
 
-        <script>
-            // ==========================================
-            // 💾 PERSISTENCE LAYER (Upgraded w/ Mem Fallback)
-            // ==========================================
-            const api = window.electronAPI;
-            const memFs = new Map(); // In-memory fallback for web-testing! 🧠
+      const FileSystemAPI = {
+        readJson: async (path) => api ? await api.readJson(path) : (memFs.get(path) ?? null),
+        writeJsonAtomic: async (path, data) => api ? await api.writeJsonAtomic(path, data) : memFs.set(path, data),
+        trashJson: async (path) => api ? await api.trashJson(path) : memFs.delete(path),
+      };
 
-            const FileSystemAPI = {
-                readJson: async (path) => api ? await api.readJson(path) : (memFs.get(path) ?? null),
-                writeJsonAtomic: async (path, data) => api ? await api.writeJsonAtomic(path, data) : memFs.set(path, data),
-                trashJson: async (path) => api ? await api.trashJson(path) : memFs.delete(path),
-            };
+      const StorageManager = {
+        saveTimeout: null, isSaving: false, needsSave: false,
+        async loadNotebookMeta() {
+          const m = await FileSystemAPI.readJson("meta.json") || {};
+      
 
-            const StorageManager = {
-                saveTimeout: null, isSaving: false, needsSave: false,
-                async loadNotebookMeta() {
-                    const m = await FileSystemAPI.readJson("meta.json") || {};
-            
+          return { version: 4, currentP: 0, pageOrder: [], scrolls: [], stickers: [], placedImages: [], regions: [], lines: [], ...m };
+        },
+        async executeSave(forceRender = false) {
+          if (this.isSaving) return (this.needsSave = true);
+          this.isSaving = true; this.needsSave = false;
+          try {
+            const layoutChanged = await State.cleanEmptySpreads();
+            const p = State.currentP;
+            const { pageOrder } = State.meta;
 
-                    return { version: 4, currentP: 0, pageOrder: [], scrolls: [], stickers: [], placedImages: [], regions: [], lines: [], ...m };
-                },
-                async executeSave(forceRender = false) {
-                    if (this.isSaving) return (this.needsSave = true);
-                    this.isSaving = true; this.needsSave = false;
-                    try {
-                        const layoutChanged = await State.cleanEmptySpreads();
-                        const p = State.currentP;
-                        const { pageOrder } = State.meta;
+            if (pageOrder[p]) await FileSystemAPI.writeJsonAtomic(`pages/${pageOrder[p]}.json`, State.pages[p]);
 
-                        if (pageOrder[p]) await FileSystemAPI.writeJsonAtomic(`pages/${pageOrder[p]}.json`, State.pages[p]);
-
-                        for (const region of State.meta.regions) {
-                            if (State.regionPages[region.pageId]) {
-                                await FileSystemAPI.writeJsonAtomic(`pages/${region.pageId}.json`, State.regionPages[region.pageId]);
-                            }
-                        }
-
-                        State.meta.currentP = State.currentP;
-                        await FileSystemAPI.writeJsonAtomic("meta.json", State.meta);
-
-                        (layoutChanged || forceRender) ? Renderer.renderApp() : Renderer.renderIndicator();
-                    } finally {
-                        this.isSaving = false;
-                        if (this.needsSave) this.executeSave();
-                    }
-                },
-                requestSave(forceRender = false) {
-                    clearTimeout(this.saveTimeout);
-                    this.saveTimeout = setTimeout(() => this.executeSave(forceRender), 500);
-                },
-            };
-
-            // ==========================================
-            // 🧠 STATE MANAGEMENT
-            // ==========================================
-            const BULLETS = { task: "•", completed: "✕", migrated: ">", scheduled: "<", event: "○", note: "-" };
-            const CYCLE = ["task", "completed", "migrated", "scheduled", "event", "note"];
-            const MD_MAP = { "* ": "task", "x ": "completed", "> ": "migrated", "< ": "scheduled", "o ": "event", "- ": "note", "# ": "h1", "## ": "h2", "### ": "h3", "#### ": "h4", "##### ": "h5", "###### ": "h6" };
-
-            const State = {
-                meta: null, pages: [], regionPages: {}, currentP: 0, blockMap: new Map(),
-                createBlock: (text = "", depth = 0, type = "text") => ({ id: crypto.randomUUID(), type, text, depth }),
-                async init() {
-                    this.meta = await StorageManager.loadNotebookMeta();
-                    if (this.meta.pageOrder.length === 0) {
-                        this.meta.pageOrder.push(`page-${crypto.randomUUID()}`, `page-${crypto.randomUUID()}`);
-                        await FileSystemAPI.writeJsonAtomic("meta.json", this.meta);
-                    }
-                    this.pages = await Promise.all(this.meta.pageOrder.map(id =>
-                        FileSystemAPI.readJson(`pages/${id}.json`).then(d => d || [this.createBlock()])
-                    ));
-                    
-                    this.pages.forEach((pageBlocks, i) => {
-                        const hasContent = pageBlocks.length > 1 || (pageBlocks[0] && pageBlocks[0].text.trim() !== "");
-                        if (hasContent && !this.meta.regions.some(r => r.surfaceId === this.meta.pageOrder[i])) {
-                            const regionPageId = `page-${crypto.randomUUID()}`;
-                            this.meta.regions.push({
-                                id: crypto.randomUUID(), surfaceId: this.meta.pageOrder[i], x: 50, y: 100, width: 400, height: 500, pageId: regionPageId
-                            });
-                            this.regionPages[regionPageId] = [...pageBlocks];
-                            this.pages[i] = [this.createBlock()];
-                        }
-                    });
-
-                    await Promise.all(this.meta.regions.map(async r => {
-                        if (!this.regionPages[r.pageId]) {
-                            this.regionPages[r.pageId] = await FileSystemAPI.readJson(`pages/${r.pageId}.json`) || [this.createBlock()];
-                        }
-                    }));
-                    
-                    this.currentP = this.meta.currentP || 0;
-                    this.rebuildIndex();
-                },
-                rebuildIndex() {
-                    this.blockMap.clear();
-                    this.pages.forEach((page, pIdx) => page.forEach((block, bIdx) => this.blockMap.set(block.id, { pIdx, bIdx, block })));
-                    Object.entries(this.regionPages).forEach(([pageId, pageBlocks]) => {
-                        pageBlocks.forEach((block, bIdx) => this.blockMap.set(block.id, { isRegion: true, pageId, bIdx, block }));
-                    });
-                },
-                getBlockCoords: (id) => State.blockMap.get(id) || null,
-                async cleanEmptySpreads() {
-                    let changed = false;
-                    while (this.pages.length > 1 && (this.pages.length - 1) !== this.currentP) {
-                        const i = this.pages.length - 1;
-                        const pId = this.meta.pageOrder[i];
-                        const isEmpty = (p, pId) => p && p.every(b => b.text.trim() === "" && b.type === "text") && !this.meta.placedImages.some(img => img.pageId === pId) && !this.meta.regions.some(r => r.surfaceId === pId);
-                        if (isEmpty(this.pages[i], pId)) {
-                            await FileSystemAPI.trashJson(`pages/${pId}.json`);
-                            this.pages.splice(i, 1); this.meta.pageOrder.splice(i, 1); this.meta.scrolls.splice(i, 1);
-                            changed = true;
-                        } else break;
-                    }
-                    if (this.currentP >= this.pages.length) { this.currentP = Math.max(0, this.pages.length - 1); changed = true; }
-                    if (changed) this.rebuildIndex();
-                    return changed;
-                },
-                async ensureEnoughPages() {
-                    if (this.currentP >= this.pages.length) {
-                        this.meta.pageOrder.push(`page-${crypto.randomUUID()}`);
-                        this.pages.push([this.createBlock()]);
-                        this.rebuildIndex();
-                        await FileSystemAPI.writeJsonAtomic("meta.json", this.meta);
-                        return true;
-                    }
-                    return false;
-                },
-            };
-
-            // ==========================================
-            // 🎯 SELECTION & CARET MANAGEMENT
-            // ==========================================
-            const SelectionManager = {
-                getCaretPos(el) {
-                    const sel = window.getSelection();
-                    if (!sel.rangeCount) return 0;
-                    const r = sel.getRangeAt(0).cloneRange();
-                    r.selectNodeContents(el); r.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset);
-                    return r.toString().length;
-                },
-                focusBlock(id, offset = 0, atEnd = false) {
-                    const el = document.querySelector(`[data-id="${id}"] .bullet-text`);
-                    if (!el) return;
-                    el.focus();
-                    const range = document.createRange(), sel = window.getSelection();
-                    if (atEnd) {
-                        range.selectNodeContents(el); range.collapse(false);
-                    } else if (el.firstChild?.nodeType === Node.TEXT_NODE) {
-                        range.setStart(el.firstChild, Math.min(offset, el.firstChild.length)); range.collapse(true);
-                    } else {
-                        range.setStart(el, 0); range.collapse(true);
-                    }
-                    sel.removeAllRanges(); sel.addRange(range);
-                },
-            };
-
-            // ==========================================
-            // 🎒 STICKER BOOK & 🖼️ IMAGE MANAGER
-            // ==========================================
-            const ContextMenu = {
-                show(x, y, items) {
-                    this.hide();
-                    const menu = document.createElement("div");
-                    menu.id = "custom-context-menu";
-                    menu.className = "fixed bg-white border border-zinc-200 shadow-xl rounded-md py-1 z-[100] w-48";
-                    menu.style.left = `${x}px`;
-                    menu.style.top = `${y}px`;
-                    
-                    items.forEach(item => {
-                        const btn = document.createElement("button");
-                        btn.className = `w-full text-left px-3 py-1.5 hover:bg-zinc-100 text-sm ${item.danger ? 'text-red-600' : 'text-zinc-800'}`;
-                        btn.innerHTML = item.label;
-                        btn.onclick = (e) => {
-                            e.stopPropagation();
-                            item.action();
-                            this.hide();
-                        };
-                        menu.appendChild(btn);
-                    });
-                    document.body.appendChild(menu);
-                    
-                    setTimeout(() => document.addEventListener("click", this.hideBound), 0);
-                    setTimeout(() => document.addEventListener("contextmenu", this.hideBound), 0);
-                },
-                hideBound: () => ContextMenu.hide(),
-                hide() {
-                    const menu = document.getElementById("custom-context-menu");
-                    if (menu) menu.remove();
-                    document.removeEventListener("click", ContextMenu.hideBound);
-                    document.removeEventListener("contextmenu", ContextMenu.hideBound);
-                }
-            };
-
-            const StickerBook = {
-                isOpen: false,
-                init() {
-                    const drawer = document.getElementById("sticker-drawer");
-                    document.getElementById("sticker-toggle").addEventListener("click", () => {
-                        this.isOpen = !this.isOpen;
-                        drawer.classList.toggle("translate-x-full", !this.isOpen);
-                    });
-                    document.getElementById("sticker-upload").addEventListener("change", (e) => {
-                        const file = e.target.files[0];
-                        if (!file) return;
-                        const reader = new FileReader();
-                        reader.onload = (ev) => this.saveSticker(ev.target.result);
-                        reader.readAsDataURL(file);
-                    });
-                    this.render();
-                },
-                async saveSticker(base64Src) {
-                    const id = crypto.randomUUID();
-                    await FileSystemAPI.writeJsonAtomic(`images/sticker-${id}.json`, { src: base64Src });
-                    State.meta.stickers.push(id);
-                    StorageManager.requestSave();
-                    this.render();
-                },
-                async removeSticker(id) {
-                    const idx = State.meta.stickers.indexOf(id);
-                    if (idx !== -1) {
-                        State.meta.stickers.splice(idx, 1);
-                        StorageManager.requestSave();
-                        this.render();
-                        await FileSystemAPI.trashJson(`images/sticker-${id}.json`);
-                    }
-                },
-                async render() {
-                    const grid = document.getElementById("sticker-grid");
-                    if (State.meta.stickers.length === 0) {
-                        grid.innerHTML = `<div class="col-span-2 text-center text-sm text-zinc-400 mt-4">No stickers saved yet! 😿</div>`;
-                        return;
-                    }
-                    grid.innerHTML = "";
-                    for (const id of State.meta.stickers) {
-                        const file = await FileSystemAPI.readJson(`images/sticker-${id}.json`);
-                        if (file && file.src) {
-                            const div = document.createElement("div");
-                            div.className = "sticker-item cursor-pointer group flex items-center justify-center p-2 bg-white rounded-lg shadow-sm border border-zinc-100 hover:shadow-md hover:-translate-y-1 transition-all";
-                            div.dataset.stickerId = id;
-                            div.draggable = true;
-                            div.ondragstart = (e) => {
-                                e.dataTransfer.setData("application/json", JSON.stringify({ type: "sticker", src: file.src }));
-                            };
-                            div.onclick = () => ImageManager.spawn(file.src);
-                            div.innerHTML = `<img src="${file.src}" draggable="false" class="max-w-full max-h-24 object-contain filter drop-shadow-sm group-hover:drop-shadow-md">`;
-                            grid.appendChild(div);
-                        }
-                    }
-                },
-            };
-
-            const ImageManager = {
-                async spawn(src, clientX, clientY) {
-                    const id = crypto.randomUUID();
-                    await FileSystemAPI.writeJsonAtomic(`images/${id}.json`, { src });
-
-                    let left = 100;
-                    let top = 100;
-                    let pageId = State.meta.pageOrder[State.currentP];
-
-                    if (clientX !== undefined && clientY !== undefined) {
-                        const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
-                        const wrapper = wrappers.find(w => {
-                            const r = w.getBoundingClientRect();
-                            return clientX >= r.left && clientX <= r.right;
-                        }) || wrappers[0];
-                        if (wrapper) {
-                            pageId = wrapper.dataset.pageId;
-                            const wrapperRect = wrapper.getBoundingClientRect();
-                            left = clientX - wrapperRect.left - 50;
-                            top = clientY - wrapperRect.top - 50;
-                        }
-                    }
-
-                    const imgData = { id, pageId, left, top, layerBucket: 'sticker' };
-                    State.meta.placedImages.push(imgData);
-                    StorageManager.requestSave();
-                    this.renderImage(imgData);
-                },
-                async renderImage(data) {
-                    const pageWrapper = document.querySelector(`.page-wrapper[data-page-id="${data.pageId}"]`);
-                    if (!pageWrapper) return;
-
-                    const file = await FileSystemAPI.readJson(`images/${data.id}.json`);
-                    if (!file || !file.src) return;
-
-                    const img = document.createElement("img");
-                    img.src = file.src;
-                    img.className = `draggable-image layer-${data.layerBucket || 'sticker'}`;
-                    img.dataset.imgId = data.id;
-                    img.dataset.pageId = data.pageId;
-                    
-                    if (data.rotation) img.style.rotate = `${data.rotation}deg`;
-                    if (data.opacity !== undefined) img.style.opacity = data.opacity;
-                    if (data.locked) img.dataset.locked = "true";
-
-                    pageWrapper.appendChild(img);
-                    this.updateImagePositionDOM(data, img);
-                },
-                updateImagePositionDOM(data, imgEl) {
-                    const img = imgEl || document.querySelector(`img[data-img-id="${data.id}"]`);
-                    if (!img) return;
-                    img.style.left = `${data.left || 0}px`;
-                    img.style.top = `${data.top || 0}px`;
-                    img.style.transform = 'none';
-                },
-                updateImage(id, updates) {
-                    const imgData = State.meta.placedImages.find(i => i.id === id);
-                    if (!imgData) return;
-                    Object.assign(imgData, updates);
-                    StorageManager.requestSave();
-                    
-                    const img = document.querySelector(`img[data-img-id="${id}"]`);
-                    if (img) {
-                        if (updates.rotation !== undefined) img.style.rotate = `${updates.rotation}deg`;
-                        if (updates.layerBucket !== undefined) img.className = `draggable-image layer-${updates.layerBucket}`;
-                        if (updates.opacity !== undefined) img.style.opacity = updates.opacity;
-                        if (updates.locked !== undefined) {
-                            if (updates.locked) img.dataset.locked = "true";
-                            else delete img.dataset.locked;
-                        }
-                        if (updates.left !== undefined || updates.top !== undefined) {
-                            this.updateImagePositionDOM(imgData, img);
-                        }
-                    }
-                },
-                restoreAll() {
-                    document.querySelectorAll(".draggable-image").forEach(el => el.remove());
-                    State.meta.placedImages.forEach(data => this.renderImage(data));
-                },
-                removeImage(id) {
-                    const idx = State.meta.placedImages.findIndex(i => i.id === id);
-                    if (idx !== -1) {
-                        State.meta.placedImages.splice(idx, 1);
-                        StorageManager.requestSave();
-                        const el = document.querySelector(`img[data-img-id="${id}"]`);
-                        if (el) el.remove();
-                        FileSystemAPI.trashJson(`images/${id}.json`);
-                    }
-                },
-            };
-
-            // ==========================================
-            // 📦 REGION MANAGER (Spatial Writing)
-            // ==========================================
-            const RegionManager = {
-                isDrawing: false, startX: 0, startY: 0, surfaceId: null, tempEl: null,
-
-                startDrawing(e) {
-                    const wrapper = e.target.closest('.page-wrapper');
-                    if (!wrapper) return;
-                    if (e.target.closest('.region-box') || e.target.closest('.draggable-image') || e.target.closest('button') || e.target.closest('#sticker-drawer') || e.target.closest('#page-indicator')) return;
-                    
-                    this.isDrawing = true;
-                    this.surfaceId = wrapper.dataset.pageId;
-                    const rect = wrapper.getBoundingClientRect();
-                    this.startX = e.clientX - rect.left;
-                    this.startY = e.clientY - rect.top;
-                    
-                    this.tempEl = document.createElement('div');
-                    this.tempEl.className = "absolute border border-zinc-400 bg-white/20 rounded-lg pointer-events-none layer-focus";
-                    this.tempEl.style.left = `${this.startX}px`;
-                    this.tempEl.style.top = `${this.startY}px`;
-                    this.tempEl.style.width = `0px`;
-                    this.tempEl.style.height = `0px`;
-                    wrapper.appendChild(this.tempEl);
-                },
-
-                draw(e) {
-                    if (!this.isDrawing || !this.tempEl) return;
-                    const wrapper = document.querySelector(`.page-wrapper[data-page-id="${this.surfaceId}"]`);
-                    if (!wrapper) return;
-                    
-                    const rect = wrapper.getBoundingClientRect();
-                    const currentX = e.clientX - rect.left;
-                    const currentY = e.clientY - rect.top;
-                    
-                    const x = Math.min(this.startX, currentX);
-                    const y = Math.min(this.startY, currentY);
-                    const w = Math.abs(currentX - this.startX);
-                    const h = Math.abs(currentY - this.startY);
-                    
-                    this.tempEl.style.left = `${x}px`;
-                    this.tempEl.style.top = `${y}px`;
-                    this.tempEl.style.width = `${w}px`;
-                    this.tempEl.style.height = `${h}px`;
-                },
-
-                stopDrawing(e) {
-                    if (!this.isDrawing) return;
-                    this.isDrawing = false;
-                    
-                    if (this.tempEl) {
-                        const w = parseInt(this.tempEl.style.width);
-                        const h = parseInt(this.tempEl.style.height);
-                        const x = parseInt(this.tempEl.style.left);
-                        const y = parseInt(this.tempEl.style.top);
-                        
-                        this.tempEl.remove();
-                        this.tempEl = null;
-                        
-                        if (w > 50 && h > 50) {
-                            const regionId = crypto.randomUUID();
-                            const pageId = `page-${crypto.randomUUID()}`;
-                            const region = { id: regionId, surfaceId: this.surfaceId, x, y, width: w, height: h, pageId };
-                            
-                            State.meta.regions.push(region);
-                            State.regionPages[pageId] = [State.createBlock()];
-                            State.rebuildIndex();
-                            StorageManager.requestSave();
-                            Renderer.renderRegionBox(region);
-                            
-                            setTimeout(() => {
-                                const firstBlockId = State.regionPages[pageId][0].id;
-                                SelectionManager.focusBlock(firstBlockId, 0);
-                            }, 50);
-                        }
-                    }
-                }
-            };
-
-            // ==========================================
-            // 🎨 RENDERER (DOM Layer)
-            // ==========================================
-            const H_STYLES = { h1: "text-4xl font-bold mt-6 mb-2", h2: "text-3xl font-bold mt-5 mb-2", h3: "text-2xl font-bold mt-4 mb-1", h4: "text-xl font-semibold mt-3 mb-1", h5: "text-lg font-semibold mt-2 mb-1", h6: "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500" };
-            const Renderer = {
-                renderApp() {
-                    document.getElementById("app").innerHTML = State.pages.map((p, i) => `
-                        <div class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden" data-page-id="${State.meta.pageOrder[i]}">
-                            <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">${i + 1}</div>
-                        </div>`).join("");
-
-                    ImageManager.restoreAll();
-                    State.meta.regions.forEach(r => this.renderRegionBox(r));
-                    this.updateViewport();
-                },
-                renderPage(pIdx) {},
-                renderRegionBox(r) {
-                    const wrapper = document.querySelector(`.page-wrapper[data-page-id="${r.surfaceId}"]`);
-                    if (!wrapper) return;
-                    
-                    let el = document.querySelector(`[data-region-id="${r.id}"]`);
-                    if (!el) {
-                        el = document.createElement('div');
-                        el.className = "region-box absolute bg-white/95 backdrop-blur-sm shadow-md border border-zinc-200/80 rounded-lg flex flex-col layer-paper";
-                        el.dataset.regionId = r.id;
-                        el.dataset.pageId = r.pageId;
-                        el.innerHTML = `
-                            <div class="region-header h-5 bg-zinc-50 border-b border-zinc-100 cursor-grab active:cursor-grabbing rounded-t-lg flex items-center px-2 hover:bg-zinc-100 transition-colors group">
-                                <div class="flex gap-1 opacity-20 group-hover:opacity-60 transition-opacity pointer-events-none">
-                                    <div class="w-1.5 h-1.5 rounded-full bg-zinc-600"></div>
-                                    <div class="w-1.5 h-1.5 rounded-full bg-zinc-600"></div>
-                                    <div class="w-1.5 h-1.5 rounded-full bg-zinc-600"></div>
-                                </div>
-                            </div>
-                            <div class="region-content flex-1 overflow-y-auto p-4 cursor-text" style="touch-action: pan-y;">
-                                <div class="bujo-list min-h-full" data-region-page-id="${r.pageId}"></div>
-                            </div>
-                            <div class="region-resizer absolute bottom-0 right-0 w-5 h-5 cursor-se-resize flex items-end justify-end p-1 opacity-0 hover:opacity-100 transition-opacity">
-                                <div class="w-2 h-2 border-r-2 border-b-2 border-zinc-400 rounded-sm pointer-events-none"></div>
-                            </div>
-                        `;
-                        wrapper.appendChild(el);
-                    }
-                    
-                    el.style.left = `${r.x}px`;
-                    el.style.top = `${r.y}px`;
-                    el.style.width = `${r.width}px`;
-                    el.style.height = `${r.height}px`;
-                    
-                    this.renderRegion(r.pageId);
-                },
-                renderRegion(pageId) {
-                    const list = document.querySelector(`.bujo-list[data-region-page-id="${pageId}"]`);
-                    if (list && State.regionPages[pageId]) {
-                        list.innerHTML = State.regionPages[pageId].map(b => this.generateBlockHTML(b)).join("");
-                    }
-                },
-                getBlockClasses(b) {
-                    return `flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ${H_STYLES[b.type] || "text-[1.05rem] leading-relaxed"} ${b.type === "completed" ? "line-through text-zinc-400 opacity-60" : ["migrated", "scheduled"].includes(b.type) ? "italic text-zinc-500" : ""}`;
-                },
-                generateBlockHTML(b) {
-                    const isB = CYCLE.includes(b.type);
-                    return `<div class="relative flex items-start mb-2 bullet-block group" data-id="${b.id}" style="margin-left: ${b.depth * 28}px">
-                        <div class="absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isB ? "opacity-40 text-zinc-500" : "opacity-0 text-zinc-300"} group-hover:opacity-100 hover:!text-black font-bold transition-all" draggable="false">${isB ? BULLETS[b.type] : "::"}</div>
-                        <div class="${this.getBlockClasses(b)}" contenteditable="true" spellcheck="false">${b.text}</div>
-                    </div>`;
-                },
-                updateBlock(block, el) {
-                    const blockEl = el || document.querySelector(`[data-id="${block.id}"]`);
-                    if (!blockEl) return;
-                    blockEl.style.marginLeft = `${block.depth * 28}px`;
-                    const isB = CYCLE.includes(block.type);
-                    const handle = blockEl.querySelector(".bullet-handle");
-                    handle.className = `absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isB ? "opacity-40 text-zinc-500" : "opacity-0 text-zinc-300"} group-hover:opacity-100 hover:!text-black font-bold transition-all`;
-                    handle.innerHTML = isB ? BULLETS[block.type] : "::";
-                    const textEl = blockEl.querySelector(".bullet-text");
-                    textEl.className = this.getBlockClasses(block);
-                    if (textEl.textContent !== block.text) textEl.textContent = block.text;
-                },
-                updateViewport() {
-                    document.getElementById("app").style.transform = `translateX(-${State.currentP * 100}vw)`;
-                    this.renderIndicator();
-                },
-                renderIndicator() {
-                    const aP = State.currentP;
-                    document.getElementById("page-indicator").innerHTML = Array.from({ length: State.pages.length })
-                        .map((_, i) => `<span onclick="EditorEngine.jumpToPair(${i})" class="pointer-events-none h-2 rounded-full transition-all duration-300 ${i === aP ? "w-6 bg-zinc-800" : "w-2 bg-zinc-300 hover:bg-zinc-400"}"></span>`).join("");
-                },
-            };
-
-            // ==========================================
-            // 🛠️ EDITOR ENGINE
-            // ==========================================
-            const EditorEngine = {
-                updateText(blockId, newText, blockEl) {
-                    const coords = State.getBlockCoords(blockId);
-                    if (!coords) return;
-                    coords.block.text = newText;
-                    for (const [prefix, type] of Object.entries(MD_MAP)) {
-                        if (coords.block.text.startsWith(prefix)) {
-                            coords.block.type = type;
-                            coords.block.text = coords.block.text.substring(prefix.length);
-                            Renderer.updateBlock(coords.block, blockEl);
-                            SelectionManager.focusBlock(coords.block.id, 0);
-                            break;
-                        }
-                    }
-                    StorageManager.requestSave();
-                },
-                setBlockType(id, type) {
-                    const c = State.getBlockCoords(id);
-                    if (c) { c.block.type = type; Renderer.updateBlock(c.block); StorageManager.requestSave(); }
-                },
-                indentBlock(id, dir) {
-                    const c = State.getBlockCoords(id);
-                    if (c) { c.block.depth = Math.max(0, Math.min(4, c.block.depth + dir)); Renderer.updateBlock(c.block); StorageManager.requestSave(); }
-                },
-                cycleType(id) {
-                    const c = State.getBlockCoords(id);
-                    if (c) this.setBlockType(id, CYCLE.indexOf(c.block.type) === -1 ? "task" : CYCLE[(CYCLE.indexOf(c.block.type) + 1) % CYCLE.length]);
-                },
-                splitBlock(id, caretPos) {
-                    const c = State.getBlockCoords(id);
-                    if (!c) return;
-                    const { pIdx, pageId, isRegion, bIdx, block } = c;
-                    const newType = block.type.startsWith("h") ? "text" : block.type;
-                    const newBlock = State.createBlock(block.text.slice(caretPos), block.depth, newType);
-                    block.text = block.text.slice(0, caretPos);
-                    
-                    if (isRegion) State.regionPages[pageId].splice(bIdx + 1, 0, newBlock);
-                    else State.pages[pIdx].splice(bIdx + 1, 0, newBlock);
-                    
-                    State.rebuildIndex();
-                    Renderer.updateBlock(block);
-                    document.querySelector(`[data-id="${block.id}"]`).insertAdjacentHTML("afterend", Renderer.generateBlockHTML(newBlock));
-                    SelectionManager.focusBlock(newBlock.id, 0);
-                    StorageManager.requestSave();
-                },
-                mergeWithPrevious(id) {
-                    const c = State.getBlockCoords(id);
-                    if (!c || c.bIdx === 0) return;
-                    const { pIdx, pageId, isRegion, bIdx, block } = c;
-                    const pageArray = isRegion ? State.regionPages[pageId] : State.pages[pIdx];
-                    const prev = pageArray[bIdx - 1];
-                    const pLen = prev.text.length;
-                    prev.text += block.text;
-                    pageArray.splice(bIdx, 1);
-                    
-                    State.rebuildIndex();
-                    document.querySelector(`[data-id="${block.id}"]`)?.remove();
-                    Renderer.updateBlock(prev);
-                    SelectionManager.focusBlock(prev.id, pLen);
-                    StorageManager.requestSave();
-                },
-                navigateVertical(id, dir) {
-                    const target = dir === -1 ? document.querySelector(`[data-id="${id}"]`)?.previousElementSibling : document.querySelector(`[data-id="${id}"]`)?.nextElementSibling;
-                    if (target) SelectionManager.focusBlock(target.dataset.id, 0, dir === -1);
-                },
-                async changePage(dir) {
-                    const nextP = State.currentP + dir;
-                    if (nextP < 0) return;
-                    State.currentP = nextP;
-                    (await State.ensureEnoughPages()) ? Renderer.renderApp() : Renderer.updateViewport();
-                    window.scrollTo({ top: 0, behavior: 'smooth' }); // Reset read progress for new pages!
-                    StorageManager.requestSave();
-                },
-                jumpToPair(idx) {
-                    State.currentP = idx;
-                    Renderer.updateViewport();
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                    StorageManager.requestSave();
-                },
-                moveBlockDOM(id, targetId, insertAfter) {
-                    const src = State.getBlockCoords(id), tgt = State.getBlockCoords(targetId);
-                    if (!src || !tgt) return;
-                    
-                    const srcArray = src.isRegion ? State.regionPages[src.pageId] : State.pages[src.pIdx];
-                    const tgtArray = tgt.isRegion ? State.regionPages[tgt.pageId] : State.pages[tgt.pIdx];
-                    
-                    const [moved] = srcArray.splice(src.bIdx, 1);
-                    const sameArray = (src.isRegion === tgt.isRegion) && (src.isRegion ? src.pageId === tgt.pageId : src.pIdx === tgt.pIdx);
-                    let iIdx = tgt.bIdx - (sameArray && src.bIdx < tgt.bIdx ? 1 : 0) + (insertAfter ? 1 : 0);
-                    
-                    tgtArray.splice(iIdx, 0, moved);
-                    State.rebuildIndex();
-                    
-                    if (src.isRegion) Renderer.renderRegion(src.pageId); else Renderer.renderPage(src.pIdx);
-                    if (!sameArray) {
-                        if (tgt.isRegion) Renderer.renderRegion(tgt.pageId); else Renderer.renderPage(tgt.pIdx);
-                    }
-                    StorageManager.requestSave();
-                },
-            };
-
-            // ==========================================
-            // ⌨️ EVENT CONTROLLER (Routing)
-            // ==========================================
-            const EventController = {
-                imgDrag: { id: null, clickOffsetX: 0, clickOffsetY: 0, origPointerEvents: "", origZIndex: "", origTransition: "" },
-                draggedId: null,
-                regionDrag: { id: null, type: null, offsetX: 0, offsetY: 0, startX: 0, startY: 0, startW: 0, startH: 0 },
-
-                init() {
-                    document.addEventListener("input", e => e.target.classList.contains("bullet-text") && EditorEngine.updateText(e.target.closest(".bullet-block").dataset.id, e.target.textContent, e.target.closest(".bullet-block")));
-                    document.addEventListener("keydown", this.handleKeydown);
-                    document.addEventListener("mousedown", this.handleHandleMouseDown);
-                    document.addEventListener("paste", this.handlePaste);
-
-                    document.addEventListener("contextmenu", this.handleContextMenu);
-                    document.addEventListener("drop", this.handleDrop);
-
-                    document.addEventListener("mousedown", this.handleImgMouseDown);
-                    document.addEventListener("dblclick", this.handleImgDblClick);
-                    window.addEventListener("mousemove", this.handleImgMouseMove);
-                    window.addEventListener("mouseup", this.handleImgMouseUp);
-
-                    document.addEventListener("mousedown", this.handleRegionMouseDown);
-                    window.addEventListener("mousemove", this.handleRegionMouseMove);
-                    window.addEventListener("mouseup", this.handleRegionMouseUp);
-
-                    document.addEventListener("mousedown", this.handleGlobalMouseDown);
-                    window.addEventListener("mousemove", this.handleGlobalMouseMove);
-                    window.addEventListener("mouseup", this.handleGlobalMouseUp);
-
-                    document.addEventListener("dragstart", this.handleDragStart);
-                    document.addEventListener("dragover", this.handleDragOver);
-                    document.addEventListener("dragend", this.handleDragEnd);
-                    this.initScrubber();
-                },
-                handleDrop: (e) => {
-                    try {
-                        const data = JSON.parse(e.dataTransfer.getData("application/json"));
-                        if (data && data.type === "sticker") {
-                            e.preventDefault();
-                            ImageManager.spawn(data.src, e.clientX, e.clientY);
-                            return;
-                        }
-                    } catch (err) {}
-
-                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                        let hasImages = false;
-                        for (let file of e.dataTransfer.files) {
-                            if (file.type.startsWith("image/")) {
-                                hasImages = true;
-                                const reader = new FileReader();
-                                reader.onload = (ev) => {
-                                    if (StickerBook.isOpen || (e.target && e.target.closest("#sticker-drawer"))) {
-                                        StickerBook.saveSticker(ev.target.result);
-                                    } else {
-                                        ImageManager.spawn(ev.target.result, e.clientX, e.clientY);
-                                    }
-                                };
-                                reader.readAsDataURL(file);
-                            }
-                        }
-                        if (hasImages) e.preventDefault();
-                    }
-                },
-                handleContextMenu: (e) => {
-                    const draggableImg = e.target.closest(".draggable-image");
-                    const stickerItem = e.target.closest(".sticker-item");
-                    const regionHeader = e.target.closest(".region-header");
-                    
-                    if (regionHeader) {
-                        e.preventDefault();
-                        const regionBox = regionHeader.closest(".region-box");
-                        const id = regionBox.dataset.regionId;
-                        ContextMenu.show(e.clientX, e.clientY, [
-                            { label: "🗑️ Delete Region", danger: true, action: () => {
-                                const idx = State.meta.regions.findIndex(r => r.id === id);
-                                if (idx !== -1) {
-                                    const r = State.meta.regions[idx];
-                                    State.meta.regions.splice(idx, 1);
-                                    delete State.regionPages[r.pageId];
-                                    FileSystemAPI.trashJson(`pages/${r.pageId}.json`);
-                                    regionBox.remove();
-                                    State.rebuildIndex();
-                                    StorageManager.requestSave();
-                                }
-                            }}
-                        ]);
-                    } else if (draggableImg) {
-                        e.preventDefault();
-                        const id = draggableImg.dataset.imgId;
-                        const imgData = State.meta.placedImages.find(i => i.id === id);
-                        if (!imgData) return;
-                        
-                        const isLocked = imgData.locked;
-                        
-                        ContextMenu.show(e.clientX, e.clientY, [
-                            { label: isLocked ? "🔓 Unlock Position" : "🔒 Lock Position", action: () => ImageManager.updateImage(id, { locked: !isLocked }) },
-                            { label: "🔄 Rotate 45°", action: () => ImageManager.updateImage(id, { rotation: ((imgData.rotation || 0) + 45) % 360 }) },
-                            { label: "🔼 Bring Forward", action: () => {
-                                const layers = ['background', 'paper', 'sticker', 'floating', 'focus'];
-                                const curr = imgData.layerBucket || 'sticker';
-                                const next = layers[Math.min(layers.length - 1, layers.indexOf(curr) + 1)];
-                                ImageManager.updateImage(id, { layerBucket: next });
-                            }},
-                            { label: "🔽 Send Backward", action: () => {
-                                const layers = ['background', 'paper', 'sticker', 'floating', 'focus'];
-                                const curr = imgData.layerBucket || 'sticker';
-                                const prev = layers[Math.max(0, layers.indexOf(curr) - 1)];
-                                ImageManager.updateImage(id, { layerBucket: prev });
-                            }},
-                            { label: "👻 Change Opacity", action: () => {
-                                const opacities = [1, 0.75, 0.5, 0.25];
-                                const current = imgData.opacity !== undefined ? imgData.opacity : 1;
-                                const next = opacities[(opacities.indexOf(current) + 1) % opacities.length];
-                                ImageManager.updateImage(id, { opacity: next });
-                            }},
-                            { label: "🗑️ Delete Image", danger: true, action: () => ImageManager.removeImage(id) }
-                        ]);
-                    } else if (stickerItem) {
-                        e.preventDefault();
-                        ContextMenu.show(e.clientX, e.clientY, [
-                            { label: "🗑️ Delete Sticker", danger: true, action: () => StickerBook.removeSticker(stickerItem.dataset.stickerId) }
-                        ]);
-                    }
-                },
-                handlePaste(e) {
-                    const items = e.clipboardData?.items;
-                    let imagePasted = false;
-                    if (items) {
-                        for (let item of items) {
-                            if (item.type.startsWith("image/")) {
-                                const reader = new FileReader();
-                                reader.onload = (ev) => {
-                                    if (StickerBook.isOpen || (e.target && e.target.closest("#sticker-drawer"))) {
-                                        StickerBook.saveSticker(ev.target.result);
-                                    } else {
-                                        ImageManager.spawn(ev.target.result);
-                                    }
-                                };
-                                reader.readAsDataURL(item.getAsFile());
-                                imagePasted = true;
-                            }
-                        }
-                    }
-                    if (imagePasted) return e.preventDefault();
-                    if (!e.target.classList.contains("bullet-text")) return;
-                    e.preventDefault();
-                    document.execCommand("insertText", false, (e.originalEvent || e).clipboardData.getData("text/plain"));
-                },
-                async handleImgDblClick(e) {
-                    if (e.target.classList.contains("draggable-image")) {
-                        // We fetch the real src back from the images folder before saving to drawer
-                        const file = await FileSystemAPI.readJson(`images/${e.target.dataset.imgId}.json`);
-                        if(file) StickerBook.saveSticker(file.src);
-                        e.target.style.scale = "1.2";
-                        setTimeout(() => (e.target.style.scale = "1"), 200);
-                    }
-                },
-                handleImgMouseDown: (e) => {
-                    if (!e.target.classList.contains("draggable-image")) return;
-                    if (e.target.dataset.locked === "true") return;
-                    
-                    const rect = e.target.getBoundingClientRect();
-                    EventController.imgDrag = {
-                        id: e.target.dataset.imgId,
-                        clickOffsetX: e.clientX - rect.left,
-                        clickOffsetY: e.clientY - rect.top,
-                        origPointerEvents: e.target.style.pointerEvents,
-                        origZIndex: e.target.style.zIndex,
-                        origTransition: e.target.style.transition
-                    };
-                    e.target.style.pointerEvents = "none";
-                    e.target.style.zIndex = "100";
-                    e.target.style.transition = "none";
-                    e.preventDefault(); e.stopPropagation();
-                },
-                handleImgMouseMove: (e) => {
-                    const drag = EventController.imgDrag;
-                    if (!drag.id) return;
-                    const img = document.querySelector(`img[data-img-id="${drag.id}"]`);
-                    if (img) {
-                        const wrapper = img.closest('.page-wrapper');
-                        if (wrapper) {
-                            const wrapperRect = wrapper.getBoundingClientRect();
-                            const finalLeft = (e.clientX - drag.clickOffsetX) - wrapperRect.left;
-                            const finalTop = (e.clientY - drag.clickOffsetY) - wrapperRect.top;
-                            img.style.left = `${finalLeft}px`;
-                            img.style.top = `${finalTop}px`;
-                            img.style.transform = 'none';
-                        }
-                    }
-                },
-                handleImgMouseUp: (e) => {
-                    const drag = EventController.imgDrag;
-                    if (!drag.id) return;
-
-                    const img = document.querySelector(`img[data-img-id="${drag.id}"]`);
-                    const imgData = State.meta.placedImages.find(i => i.id === drag.id);
-
-                    if (img && imgData) {
-                        img.style.pointerEvents = drag.origPointerEvents || "";
-                        img.style.zIndex = drag.origZIndex || "";
-                        img.style.transition = drag.origTransition || "";
-
-                        const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
-                        const closestWrapper = wrappers.find(w => {
-                            const r = w.getBoundingClientRect();
-                            return e.clientX >= r.left && e.clientX <= r.right;
-                        }) || img.closest('.page-wrapper');
-                        
-                        if (closestWrapper) {
-                            imgData.pageId = closestWrapper.dataset.pageId;
-                            if (img.parentElement !== closestWrapper) closestWrapper.appendChild(img);
-                            
-                            const wrapperRect = closestWrapper.getBoundingClientRect();
-                            imgData.left = (e.clientX - drag.clickOffsetX) - wrapperRect.left;
-                            imgData.top = (e.clientY - drag.clickOffsetY) - wrapperRect.top;
-                        }
-                        
-                        StorageManager.requestSave();
-                        ImageManager.updateImagePositionDOM(imgData, img);
-                    }
-                    EventController.imgDrag.id = null;
-                },
-                handleKeydown(e) {
-                    const k = e.key, alt = e.altKey, ctrl = e.ctrlKey, shift = e.shiftKey;
-                    if (!e.target.classList.contains("bullet-text")) {
-                        if (k === "ArrowLeft" || k === "ArrowRight") { e.preventDefault(); EditorEngine.changePage(k === "ArrowLeft" ? -1 : 1); }
-                        return;
-                    }
-                    if (k === "Escape") return e.preventDefault(), e.target.blur();
-                    const bId = e.target.closest(".bullet-block").dataset.id;
-
-                    if (alt && k === "ArrowLeft") return e.preventDefault(), EditorEngine.changePage(-1);
-                    if (alt && (k === "ArrowRight" || k === "Enter")) return e.preventDefault(), EditorEngine.changePage(1);
-                    if (ctrl && k === "Enter") return e.preventDefault(), EditorEngine.cycleType(bId);
-                    if (k === "Enter" && !shift) return e.preventDefault(), EditorEngine.splitBlock(bId, SelectionManager.getCaretPos(e.target));
-                    if (k === "Tab") return e.preventDefault(), EditorEngine.indentBlock(bId, shift ? -1 : 1);
-                    if (k === "Backspace" && SelectionManager.getCaretPos(e.target) === 0) {
-                        e.preventDefault();
-                        const c = State.getBlockCoords(bId);
-                        c.block.type !== "text" ? EditorEngine.setBlockType(bId, "text") : (c.bIdx > 0 && EditorEngine.mergeWithPrevious(bId));
-                        return;
-                    }
-                    if (k === "ArrowUp" || k === "ArrowDown") {
-                        const sel = window.getSelection();
-                        if (!sel.rangeCount) return;
-                        const r = sel.getRangeAt(0).getBoundingClientRect(), elR = e.target.getBoundingClientRect();
-                        if (k === "ArrowUp" && r.top - elR.top < 24) return e.preventDefault(), EditorEngine.navigateVertical(bId, -1);
-                        if (k === "ArrowDown" && elR.bottom - r.bottom < 24) return e.preventDefault(), EditorEngine.navigateVertical(bId, 1);
-                    }
-                },
-                handleHandleMouseDown(e) {
-                    const handle = e.target.closest(".bullet-handle");
-                    if (handle) {
-                        const block = handle.closest(".bullet-block");
-                        block.setAttribute("draggable", "true");
-                        const clean = () => { block.setAttribute("draggable", "false"); document.removeEventListener("mouseup", clean); handle.removeEventListener("mouseleave", clean); };
-                        document.addEventListener("mouseup", clean); handle.addEventListener("mouseleave", clean);
-                    }
-                },
-                handleRegionMouseDown: (e) => {
-                    const resizer = e.target.closest('.region-resizer');
-                    if (resizer) {
-                        const regionBox = resizer.closest('.region-box');
-                        EventController.regionDrag = {
-                            id: regionBox.dataset.regionId, type: 'resize',
-                            startX: e.clientX, startY: e.clientY,
-                            startW: regionBox.offsetWidth, startH: regionBox.offsetHeight
-                        };
-                        e.preventDefault(); e.stopPropagation();
-                        return;
-                    }
-                    const header = e.target.closest('.region-header');
-                    if (header) {
-                        const regionBox = header.closest('.region-box');
-                        const rect = regionBox.getBoundingClientRect();
-                        EventController.regionDrag = {
-                            id: regionBox.dataset.regionId, type: 'move',
-                            offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top
-                        };
-                        e.preventDefault(); e.stopPropagation();
-                    }
-                },
-                handleRegionMouseMove: (e) => {
-                    const drag = EventController.regionDrag;
-                    if (!drag.id) return;
-                    const regionBox = document.querySelector(`.region-box[data-region-id="${drag.id}"]`);
-                    if (!regionBox) return;
-                    
-                    if (drag.type === 'move') {
-                        const wrapper = regionBox.closest('.page-wrapper');
-                        const wrapperRect = wrapper.getBoundingClientRect();
-                        regionBox.style.left = `${(e.clientX - drag.offsetX) - wrapperRect.left}px`;
-                        regionBox.style.top = `${(e.clientY - drag.offsetY) - wrapperRect.top}px`;
-                    } else if (drag.type === 'resize') {
-                        regionBox.style.width = `${Math.max(100, drag.startW + (e.clientX - drag.startX))}px`;
-                        regionBox.style.height = `${Math.max(100, drag.startH + (e.clientY - drag.startY))}px`;
-                    }
-                },
-                handleRegionMouseUp: (e) => {
-                    const drag = EventController.regionDrag;
-                    if (!drag.id) return;
-                    const regionBox = document.querySelector(`.region-box[data-region-id="${drag.id}"]`);
-                    const regionData = State.meta.regions.find(r => r.id === drag.id);
-                    if (regionBox && regionData) {
-                        if (drag.type === 'move') {
-                            const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
-                            const closestWrapper = wrappers.find(w => {
-                                const r = w.getBoundingClientRect();
-                                return e.clientX >= r.left && e.clientX <= r.right;
-                            }) || regionBox.closest('.page-wrapper');
-                            
-                            if (closestWrapper) {
-                                regionData.surfaceId = closestWrapper.dataset.pageId;
-                                if (regionBox.parentElement !== closestWrapper) closestWrapper.appendChild(regionBox);
-                                const wrapperRect = closestWrapper.getBoundingClientRect();
-                                regionData.x = (e.clientX - drag.offsetX) - wrapperRect.left;
-                                regionData.y = (e.clientY - drag.offsetY) - wrapperRect.top;
-                                regionBox.style.left = `${regionData.x}px`;
-                                regionBox.style.top = `${regionData.y}px`;
-                            }
-                        } else if (drag.type === 'resize') {
-                            regionData.width = regionBox.offsetWidth;
-                            regionData.height = regionBox.offsetHeight;
-                        }
-                        StorageManager.requestSave();
-                    }
-                    EventController.regionDrag = { id: null, type: null, offsetX: 0, offsetY: 0, startX: 0, startY: 0, startW: 0, startH: 0 };
-                },
-                handleGlobalMouseDown: (e) => {
-                    if (e.button === 0) RegionManager.startDrawing(e);
-                },
-                handleGlobalMouseMove: (e) => {
-                    RegionManager.draw(e);
-                },
-                handleGlobalMouseUp: (e) => {
-                    RegionManager.stopDrawing(e);
-                },
-                handleDragStart(e) {
-                    const block = e.target.closest(".bullet-block");
-                    if (block && block.getAttribute("draggable") === "true") {
-                        EventController.draggedId = block.dataset.id;
-                        Promise.resolve().then(() => block.classList.add("dragging"));
-                    } else e.preventDefault();
-                },
-                handleDragOver(e) {
-                    e.preventDefault();
-                    const target = e.target.closest(".bullet-block"), draggedId = EventController.draggedId;
-                    if (target && target.dataset.id !== draggedId) {
-                        const rect = target.getBoundingClientRect(), el = document.querySelector(`[data-id="${draggedId}"]`);
-                        target.parentNode.insertBefore(el, e.clientY > rect.top + rect.height / 2 ? target.nextSibling : target);
-                    }
-                },
-                handleDragEnd() {
-                    const el = document.querySelector(`[data-id="${EventController.draggedId}"]`);
-                    if (el) {
-                        el.classList.remove("dragging"); el.setAttribute("draggable", "false");
-                        const prev = el.previousElementSibling, next = el.nextElementSibling, list = el.closest(".bujo-list");
-                        if (list) prev ? EditorEngine.moveBlockDOM(EventController.draggedId, prev.dataset.id, true) : next && EditorEngine.moveBlockDOM(EventController.draggedId, next.dataset.id, false);
-                    }
-                    EventController.draggedId = null;
-                },
-                initScrubber() {
-                    const ind = document.getElementById("page-indicator");
-                    let isScrubbing = false;
-                    const scrub = (e) => {
-                        const r = ind.getBoundingClientRect(), pC = State.pages.length;
-                        if (pC <= 1) return;
-                        const idx = Math.min(Math.floor((Math.max(0, Math.min(e.clientX - r.left, r.width)) / r.width) * pC), pC - 1);
-                        if (State.currentP !== idx) {
-                            State.currentP = idx;
-                            Renderer.updateViewport();
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }
-                    };
-                    ind.addEventListener("pointerdown", (e) => { isScrubbing = true; document.getElementById("app").style.transitionDuration = "0s"; ind.setPointerCapture(e.pointerId); scrub(e); });
-                    ind.addEventListener("pointermove", (e) => isScrubbing && scrub(e));
-                    ind.addEventListener("pointerup", (e) => { isScrubbing = false; document.getElementById("app").style.transitionDuration = ""; ind.releasePointerCapture(e.pointerId); StorageManager.requestSave(); });
-                },
-            };
-
-            // ==========================================
-            // 🚀 BOOTSTRAP
-            // ==========================================
-            async function startApp() {
-                await State.init();
-                StickerBook.init();
-                Renderer.renderApp();
-                EventController.init();
+            for (const region of State.meta.regions) {
+              if (State.regionPages[region.pageId]) {
+                await FileSystemAPI.writeJsonAtomic(`pages/${region.pageId}.json`, State.regionPages[region.pageId]);
+              }
             }
-            startApp();
-        </script>
-    </body>
+
+            State.meta.currentP = State.currentP;
+            await FileSystemAPI.writeJsonAtomic("meta.json", State.meta);
+
+            (layoutChanged || forceRender) ? Renderer.renderApp() : Renderer.renderIndicator();
+          } finally {
+            this.isSaving = false;
+            if (this.needsSave) this.executeSave();
+          }
+        },
+        requestSave(forceRender = false) {
+          clearTimeout(this.saveTimeout);
+          this.saveTimeout = setTimeout(() => this.executeSave(forceRender), 500);
+        },
+      };
+const BULLETS = { task: "•", completed: "✕", migrated: ">", scheduled: "<", event: "○", note: "-" };
+      const CYCLE = ["task", "completed", "migrated", "scheduled", "event", "note"];
+      const MD_MAP = { "* ": "task", "x ": "completed", "> ": "migrated", "< ": "scheduled", "o ": "event", "- ": "note", "# ": "h1", "## ": "h2", "### ": "h3", "#### ": "h4", "##### ": "h5", "###### ": "h6" };
+
+      const State = {
+        meta: null, pages: [], regionPages: {}, currentP: 0, blockMap: new Map(),
+        createBlock: (text = "", depth = 0, type = "text") => ({ id: crypto.randomUUID(), type, text, depth }),
+        async init() {
+          this.meta = await StorageManager.loadNotebookMeta();
+          if (this.meta.pageOrder.length === 0) {
+            this.meta.pageOrder.push(`page-${crypto.randomUUID()}`, `page-${crypto.randomUUID()}`);
+            await FileSystemAPI.writeJsonAtomic("meta.json", this.meta);
+          }
+          this.pages = await Promise.all(this.meta.pageOrder.map(id =>
+            FileSystemAPI.readJson(`pages/${id}.json`).then(d => d || [this.createBlock()])
+          ));
+          
+          this.pages.forEach((pageBlocks, i) => {
+            const hasContent = pageBlocks.length > 1 || (pageBlocks[0] && pageBlocks[0].text.trim() !== "");
+            if (hasContent && !this.meta.regions.some(r => r.surfaceId === this.meta.pageOrder[i])) {
+              const regionPageId = `page-${crypto.randomUUID()}`;
+              this.meta.regions.push({
+                id: crypto.randomUUID(), surfaceId: this.meta.pageOrder[i], x: 50, y: 100, width: 400, height: 500, pageId: regionPageId
+              });
+              this.regionPages[regionPageId] = [...pageBlocks];
+              this.pages[i] = [this.createBlock()];
+            }
+          });
+
+          await Promise.all(this.meta.regions.map(async r => {
+            if (!this.regionPages[r.pageId]) {
+              this.regionPages[r.pageId] = await FileSystemAPI.readJson(`pages/${r.pageId}.json`) || [this.createBlock()];
+            }
+          }));
+          
+          this.currentP = this.meta.currentP || 0;
+          this.rebuildIndex();
+        },
+        rebuildIndex() {
+          this.blockMap.clear();
+          this.pages.forEach((page, pIdx) => page.forEach((block, bIdx) => this.blockMap.set(block.id, { pIdx, bIdx, block })));
+          Object.entries(this.regionPages).forEach(([pageId, pageBlocks]) => {
+            pageBlocks.forEach((block, bIdx) => this.blockMap.set(block.id, { isRegion: true, pageId, bIdx, block }));
+          });
+        },
+        getBlockCoords: (id) => State.blockMap.get(id) || null,
+        async cleanEmptySpreads() {
+          let changed = false;
+          while (this.pages.length > 1 && (this.pages.length - 1) !== this.currentP) {
+            const i = this.pages.length - 1;
+            const pId = this.meta.pageOrder[i];
+            const isEmpty = (p, pId) => p && p.every(b => b.text.trim() === "" && b.type === "text") && !this.meta.placedImages.some(img => img.pageId === pId) && !this.meta.regions.some(r => r.surfaceId === pId);
+            if (isEmpty(this.pages[i], pId)) {
+              await FileSystemAPI.trashJson(`pages/${pId}.json`);
+              this.pages.splice(i, 1); this.meta.pageOrder.splice(i, 1); this.meta.scrolls.splice(i, 1);
+              changed = true;
+            } else break;
+          }
+          if (this.currentP >= this.pages.length) { this.currentP = Math.max(0, this.pages.length - 1); changed = true; }
+          if (changed) this.rebuildIndex();
+          return changed;
+        },
+        async ensureEnoughPages() {
+          if (this.currentP >= this.pages.length) {
+            this.meta.pageOrder.push(`page-${crypto.randomUUID()}`);
+            this.pages.push([this.createBlock()]);
+            this.rebuildIndex();
+            await FileSystemAPI.writeJsonAtomic("meta.json", this.meta);
+            return true;
+          }
+          return false;
+        },
+      };
+const SelectionManager = {
+        getCaretPos(el) {
+          const sel = window.getSelection();
+          if (!sel.rangeCount) return 0;
+          const r = sel.getRangeAt(0).cloneRange();
+          r.selectNodeContents(el); r.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset);
+          return r.toString().length;
+        },
+        focusBlock(id, offset = 0, atEnd = false) {
+          const el = qs(`[data-id="${id}"] .bullet-text`);
+          if (!el) return;
+          el.focus();
+          const range = document.createRange(), sel = window.getSelection();
+          if (atEnd) {
+            range.selectNodeContents(el); range.collapse(false);
+          } else if (el.firstChild?.nodeType === Node.TEXT_NODE) {
+            range.setStart(el.firstChild, Math.min(offset, el.firstChild.length)); range.collapse(true);
+          } else {
+            range.setStart(el, 0); range.collapse(true);
+          }
+          sel.removeAllRanges(); sel.addRange(range);
+        },
+      };
+const ContextMenu = {
+        show(x, y, items) {
+          this.hide();
+          const menu = document.createElement("div");
+          menu.id = "custom-context-menu";
+          menu.className = "fixed bg-white border border-zinc-200 shadow-xl rounded-md py-1 z-[100] w-48";
+          menu.style.left = `${x}px`;
+          menu.style.top = `${y}px`;
+          
+          items.forEach(item => {
+            const btn = document.createElement("button");
+            btn.className = `w-full text-left px-3 py-1.5 hover:bg-zinc-100 text-sm ${item.danger ? 'text-red-600' : 'text-zinc-800'}`;
+            btn.innerHTML = item.label;
+            btn.onclick = (e) => {
+              e.stopPropagation();
+              item.action();
+              this.hide();
+            };
+            menu.appendChild(btn);
+          });
+          document.body.appendChild(menu);
+          
+          setTimeout(() => document.addEventListener("click", this.hideBound), 0);
+          setTimeout(() => document.addEventListener("contextmenu", this.hideBound), 0);
+        },
+        hideBound: () => ContextMenu.hide(),
+        hide() {
+          const menu = gid("custom-context-menu");
+          if (menu) menu.remove();
+          document.removeEventListener("click", ContextMenu.hideBound);
+          document.removeEventListener("contextmenu", ContextMenu.hideBound);
+        }
+      };
+
+      const StickerBook = {
+        isOpen: false,
+        init() {
+          const drawer = gid("sticker-drawer");
+          gid("sticker-toggle").addEventListener("click", () => {
+            this.isOpen = !this.isOpen;
+            drawer.classList.toggle("translate-x-full", !this.isOpen);
+          });
+          gid("sticker-upload").addEventListener("change", (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (ev) => this.saveSticker(ev.target.result);
+            reader.readAsDataURL(file);
+          });
+          this.render();
+        },
+        async saveSticker(base64Src) {
+          const id = crypto.randomUUID();
+          await FileSystemAPI.writeJsonAtomic(`images/sticker-${id}.json`, { src: base64Src });
+          State.meta.stickers.push(id);
+          StorageManager.requestSave();
+          this.render();
+        },
+        async removeSticker(id) {
+          const idx = State.meta.stickers.indexOf(id);
+          if (idx !== -1) {
+            State.meta.stickers.splice(idx, 1);
+            StorageManager.requestSave();
+            this.render();
+            await FileSystemAPI.trashJson(`images/sticker-${id}.json`);
+          }
+        },
+        async render() {
+          const grid = gid("sticker-grid");
+          if (State.meta.stickers.length === 0) {
+            grid.innerHTML = `<div class="col-span-2 text-center text-sm text-zinc-400 mt-4">No stickers saved yet! 😿</div>`;
+            return;
+          }
+          grid.innerHTML = "";
+          for (const id of State.meta.stickers) {
+            const file = await FileSystemAPI.readJson(`images/sticker-${id}.json`);
+            if (file && file.src) {
+              const div = document.createElement("div");
+              div.className = "sticker-item cursor-pointer group flex items-center justify-center p-2 bg-white rounded-lg shadow-sm border border-zinc-100 hover:shadow-md hover:-translate-y-1 transition-all";
+              div.dataset.stickerId = id;
+              div.draggable = true;
+              div.ondragstart = (e) => {
+                e.dataTransfer.setData("application/json", JSON.stringify({ type: "sticker", src: file.src }));
+              };
+              div.onclick = () => ImageManager.spawn(file.src);
+              div.innerHTML = `<img src="${file.src}" draggable="false" class="max-w-full max-h-24 object-contain filter drop-shadow-sm group-hover:drop-shadow-md">`;
+              grid.appendChild(div);
+            }
+          }
+        },
+      };
+
+      const ImageManager = {
+        async spawn(src, clientX, clientY) {
+          const id = crypto.randomUUID();
+          await FileSystemAPI.writeJsonAtomic(`images/${id}.json`, { src });
+
+          let left = 100;
+          let top = 100;
+          let pageId = State.meta.pageOrder[State.currentP];
+
+          if (clientX !== undefined && clientY !== undefined) {
+            const wrappers = Array.from(qsa('.page-wrapper'));
+            const wrapper = wrappers.find(w => {
+              const r = w.getBoundingClientRect();
+              return clientX >= r.left && clientX <= r.right;
+            }) || wrappers[0];
+            if (wrapper) {
+              pageId = wrapper.dataset.pageId;
+              const wrapperRect = wrapper.getBoundingClientRect();
+              left = clientX - wrapperRect.left - 50;
+              top = clientY - wrapperRect.top - 50;
+            }
+          }
+
+          const imgData = { id, pageId, left, top, layerBucket: 'sticker' };
+          State.meta.placedImages.push(imgData);
+          StorageManager.requestSave();
+          this.renderImage(imgData);
+        },
+        async renderImage(data) {
+          const pageWrapper = qs(`.page-wrapper[data-page-id="${data.pageId}"]`);
+          if (!pageWrapper) return;
+
+          const file = await FileSystemAPI.readJson(`images/${data.id}.json`);
+          if (!file || !file.src) return;
+
+          const img = document.createElement("img");
+          img.src = file.src;
+          img.className = `draggable-image layer-${data.layerBucket || 'sticker'}`;
+          img.dataset.imgId = data.id;
+          img.dataset.pageId = data.pageId;
+          
+          if (data.rotation) img.style.rotate = `${data.rotation}deg`;
+          if (data.opacity !== undefined) img.style.opacity = data.opacity;
+          if (data.locked) img.dataset.locked = "true";
+
+          pageWrapper.appendChild(img);
+          this.updateImagePositionDOM(data, img);
+        },
+        updateImagePositionDOM(data, imgEl) {
+          const img = imgEl || qs(`img[data-img-id="${data.id}"]`);
+          if (!img) return;
+          img.style.left = `${data.left || 0}px`;
+          img.style.top = `${data.top || 0}px`;
+          img.style.transform = 'none';
+        },
+        updateImage(id, updates) {
+          const imgData = State.meta.placedImages.find(i => i.id === id);
+          if (!imgData) return;
+          Object.assign(imgData, updates);
+          StorageManager.requestSave();
+          
+          const img = qs(`img[data-img-id="${id}"]`);
+          if (img) {
+            if (updates.rotation !== undefined) img.style.rotate = `${updates.rotation}deg`;
+            if (updates.layerBucket !== undefined) img.className = `draggable-image layer-${updates.layerBucket}`;
+            if (updates.opacity !== undefined) img.style.opacity = updates.opacity;
+            if (updates.locked !== undefined) {
+              if (updates.locked) img.dataset.locked = "true";
+              else delete img.dataset.locked;
+            }
+            if (updates.left !== undefined || updates.top !== undefined) {
+              this.updateImagePositionDOM(imgData, img);
+            }
+          }
+        },
+        restoreAll() {
+          qsa(".draggable-image").forEach(el => el.remove());
+          State.meta.placedImages.forEach(data => this.renderImage(data));
+        },
+        removeImage(id) {
+          const idx = State.meta.placedImages.findIndex(i => i.id === id);
+          if (idx !== -1) {
+            State.meta.placedImages.splice(idx, 1);
+            StorageManager.requestSave();
+            const el = qs(`img[data-img-id="${id}"]`);
+            if (el) el.remove();
+            FileSystemAPI.trashJson(`images/${id}.json`);
+          }
+        },
+      };
+const RegionManager = {
+        isDrawing: false, startX: 0, startY: 0, surfaceId: null, tempEl: null,
+
+        startDrawing(e) {
+          const wrapper = e.target.closest('.page-wrapper');
+          if (!wrapper) return;
+          if (e.target.closest('.region-box') || e.target.closest('.draggable-image') || e.target.closest('button') || e.target.closest('#sticker-drawer') || e.target.closest('#page-indicator')) return;
+          
+          this.isDrawing = true;
+          this.surfaceId = wrapper.dataset.pageId;
+          const rect = wrapper.getBoundingClientRect();
+          this.startX = e.clientX - rect.left;
+          this.startY = e.clientY - rect.top;
+          
+          this.tempEl = document.createElement('div');
+          this.tempEl.className = "absolute border border-zinc-400 bg-white/20 rounded-lg pointer-events-none layer-focus";
+          this.tempEl.style.left = `${this.startX}px`;
+          this.tempEl.style.top = `${this.startY}px`;
+          this.tempEl.style.width = `0px`;
+          this.tempEl.style.height = `0px`;
+          wrapper.appendChild(this.tempEl);
+        },
+
+        draw(e) {
+          if (!this.isDrawing || !this.tempEl) return;
+          const wrapper = qs(`.page-wrapper[data-page-id="${this.surfaceId}"]`);
+          if (!wrapper) return;
+          
+          const rect = wrapper.getBoundingClientRect();
+          const currentX = e.clientX - rect.left;
+          const currentY = e.clientY - rect.top;
+          
+          const x = Math.min(this.startX, currentX);
+          const y = Math.min(this.startY, currentY);
+          const w = Math.abs(currentX - this.startX);
+          const h = Math.abs(currentY - this.startY);
+          
+          this.tempEl.style.left = `${x}px`;
+          this.tempEl.style.top = `${y}px`;
+          this.tempEl.style.width = `${w}px`;
+          this.tempEl.style.height = `${h}px`;
+        },
+
+        stopDrawing(e) {
+          if (!this.isDrawing) return;
+          this.isDrawing = false;
+          
+          if (this.tempEl) {
+            const w = parseInt(this.tempEl.style.width);
+            const h = parseInt(this.tempEl.style.height);
+            const x = parseInt(this.tempEl.style.left);
+            const y = parseInt(this.tempEl.style.top);
+            
+            this.tempEl.remove();
+            this.tempEl = null;
+            
+            if (w > 50 && h > 50) {
+              const regionId = crypto.randomUUID();
+              const pageId = `page-${crypto.randomUUID()}`;
+              const region = { id: regionId, surfaceId: this.surfaceId, x, y, width: w, height: h, pageId };
+              
+              State.meta.regions.push(region);
+              State.regionPages[pageId] = [State.createBlock()];
+              State.rebuildIndex();
+              StorageManager.requestSave();
+              Renderer.renderRegionBox(region);
+              
+              setTimeout(() => {
+                const firstBlockId = State.regionPages[pageId][0].id;
+                SelectionManager.focusBlock(firstBlockId, 0);
+              }, 50);
+            }
+          }
+        }
+      };
+const H_STYLES = { h1: "text-4xl font-bold mt-6 mb-2", h2: "text-3xl font-bold mt-5 mb-2", h3: "text-2xl font-bold mt-4 mb-1", h4: "text-xl font-semibold mt-3 mb-1", h5: "text-lg font-semibold mt-2 mb-1", h6: "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500" };
+      const Renderer = {
+        renderApp() {
+          gid("app").innerHTML = State.pages.map((p, i) => `
+            <div class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden" data-page-id="${State.meta.pageOrder[i]}">
+              <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">${i + 1}</div>
+            </div>`).join("");
+
+          ImageManager.restoreAll();
+          State.meta.regions.forEach(r => this.renderRegionBox(r));
+          this.updateViewport();
+        },
+        renderPage(pIdx) {},
+        renderRegionBox(r) {
+          const wrapper = qs(`.page-wrapper[data-page-id="${r.surfaceId}"]`);
+          if (!wrapper) return;
+          
+          let el = qs(`[data-region-id="${r.id}"]`);
+          if (!el) {
+            el = document.createElement('div');
+            el.className = "region-box absolute bg-white/95 backdrop-blur-sm shadow-md border border-zinc-200/80 rounded-lg flex flex-col layer-paper";
+            el.dataset.regionId = r.id;
+            el.dataset.pageId = r.pageId;
+            el.innerHTML = `
+              <div class="region-header h-5 bg-transparent cursor-grab active:cursor-grabbing rounded-t-lg flex items-center px-2 hover:bg-black/5 transition-colors group">
+                <div class="flex gap-1 opacity-20 group-hover:opacity-60 transition-opacity pointer-events-none">
+                  <div class="w-1.5 h-1.5 rounded-full bg-zinc-600"></div>
+                  <div class="w-1.5 h-1.5 rounded-full bg-zinc-600"></div>
+                  <div class="w-1.5 h-1.5 rounded-full bg-zinc-600"></div>
+                </div>
+              </div>
+              <div class="region-content flex-1 overflow-y-auto p-4 cursor-text" style="touch-action: pan-y;">
+                <div class="bujo-list min-h-full" data-region-page-id="${r.pageId}"></div>
+              </div>
+              <div class="region-resizer absolute bottom-0 right-0 w-5 h-5 cursor-se-resize flex items-end justify-end p-1 opacity-0 hover:opacity-100 transition-opacity">
+                <div class="w-2 h-2 border-r-2 border-b-2 border-zinc-400 rounded-sm pointer-events-none"></div>
+              </div>
+            `;
+            wrapper.appendChild(el);
+          }
+          
+          el.style.left = `${r.x}px`;
+          el.style.top = `${r.y}px`;
+          el.style.width = `${r.width}px`;
+          el.style.height = `${r.height}px`;
+          
+          this.renderRegion(r.pageId);
+        },
+        renderRegion(pageId) {
+          const list = qs(`.bujo-list[data-region-page-id="${pageId}"]`);
+          if (list && State.regionPages[pageId]) {
+            list.innerHTML = State.regionPages[pageId].map(b => this.generateBlockHTML(b)).join("");
+          }
+        },
+        getBlockClasses(b) {
+          return `flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ${H_STYLES[b.type] || "text-[1.05rem] leading-relaxed"} ${b.type === "completed" ? "line-through text-zinc-400 opacity-60" : ["migrated", "scheduled"].includes(b.type) ? "italic text-zinc-500" : ""}`;
+        },
+        generateBlockHTML(b) {
+          const isB = CYCLE.includes(b.type);
+          return `<div class="relative flex items-start mb-2 bullet-block group" data-id="${b.id}" style="margin-left: ${b.depth * 28}px">
+            <div class="absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isB ? "opacity-40 text-zinc-500" : "opacity-0 text-zinc-300"} group-hover:opacity-100 hover:!text-black font-bold transition-all" draggable="false">${isB ? BULLETS[b.type] : "::"}</div>
+            <div class="${this.getBlockClasses(b)}" contenteditable="true" spellcheck="false">${b.text}</div>
+          </div>`;
+        },
+        updateBlock(block, el) {
+          const blockEl = el || qs(`[data-id="${block.id}"]`);
+          if (!blockEl) return;
+          blockEl.style.marginLeft = `${block.depth * 28}px`;
+          const isB = CYCLE.includes(block.type);
+          const handle = blockEl.querySelector(".bullet-handle");
+          handle.className = `absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isB ? "opacity-40 text-zinc-500" : "opacity-0 text-zinc-300"} group-hover:opacity-100 hover:!text-black font-bold transition-all`;
+          handle.innerHTML = isB ? BULLETS[block.type] : "::";
+          const textEl = blockEl.querySelector(".bullet-text");
+          textEl.className = this.getBlockClasses(block);
+          if (textEl.textContent !== block.text) textEl.textContent = block.text;
+        },
+        updateViewport() {
+          gid("app").style.transform = `translateX(-${State.currentP * 100}vw)`;
+          this.renderIndicator();
+        },
+        renderIndicator() {
+          const aP = State.currentP;
+          gid("page-indicator").innerHTML = Array.from({ length: State.pages.length })
+            .map((_, i) => `<span onclick="EditorEngine.jumpToPair(${i})" class="pointer-events-none h-2 rounded-full transition-all duration-300 ${i === aP ? "w-6 bg-zinc-800" : "w-2 bg-zinc-300 hover:bg-zinc-400"}"></span>`).join("");
+        },
+      };
+const EditorEngine = {
+        updateText(blockId, newText, blockEl) {
+          const coords = State.getBlockCoords(blockId);
+          if (!coords) return;
+          coords.block.text = newText;
+          for (const [prefix, type] of Object.entries(MD_MAP)) {
+            if (coords.block.text.startsWith(prefix)) {
+              coords.block.type = type;
+              coords.block.text = coords.block.text.substring(prefix.length);
+              Renderer.updateBlock(coords.block, blockEl);
+              SelectionManager.focusBlock(coords.block.id, 0);
+              break;
+            }
+          }
+          StorageManager.requestSave();
+        },
+        setBlockType(id, type) {
+          const c = State.getBlockCoords(id);
+          if (c) { c.block.type = type; Renderer.updateBlock(c.block); StorageManager.requestSave(); }
+        },
+        indentBlock(id, dir) {
+          const c = State.getBlockCoords(id);
+          if (c) { c.block.depth = Math.max(0, Math.min(4, c.block.depth + dir)); Renderer.updateBlock(c.block); StorageManager.requestSave(); }
+        },
+        cycleType(id) {
+          const c = State.getBlockCoords(id);
+          if (c) this.setBlockType(id, CYCLE.indexOf(c.block.type) === -1 ? "task" : CYCLE[(CYCLE.indexOf(c.block.type) + 1) % CYCLE.length]);
+        },
+        splitBlock(id, caretPos) {
+          const c = State.getBlockCoords(id);
+          if (!c) return;
+          const { pIdx, pageId, isRegion, bIdx, block } = c;
+          const newType = block.type.startsWith("h") ? "text" : block.type;
+          const newBlock = State.createBlock(block.text.slice(caretPos), block.depth, newType);
+          block.text = block.text.slice(0, caretPos);
+          
+          if (isRegion) State.regionPages[pageId].splice(bIdx + 1, 0, newBlock);
+          else State.pages[pIdx].splice(bIdx + 1, 0, newBlock);
+          
+          State.rebuildIndex();
+          Renderer.updateBlock(block);
+          qs(`[data-id="${block.id}"]`).insertAdjacentHTML("afterend", Renderer.generateBlockHTML(newBlock));
+          SelectionManager.focusBlock(newBlock.id, 0);
+          StorageManager.requestSave();
+        },
+        mergeWithPrevious(id) {
+          const c = State.getBlockCoords(id);
+          if (!c || c.bIdx === 0) return;
+          const { pIdx, pageId, isRegion, bIdx, block } = c;
+          const pageArray = isRegion ? State.regionPages[pageId] : State.pages[pIdx];
+          const prev = pageArray[bIdx - 1];
+          const pLen = prev.text.length;
+          prev.text += block.text;
+          pageArray.splice(bIdx, 1);
+          
+          State.rebuildIndex();
+          qs(`[data-id="${block.id}"]`)?.remove();
+          Renderer.updateBlock(prev);
+          SelectionManager.focusBlock(prev.id, pLen);
+          StorageManager.requestSave();
+        },
+        navigateVertical(id, dir) {
+          const target = dir === -1 ? qs(`[data-id="${id}"]`)?.previousElementSibling : qs(`[data-id="${id}"]`)?.nextElementSibling;
+          if (target) SelectionManager.focusBlock(target.dataset.id, 0, dir === -1);
+        },
+        async changePage(dir) {
+          const nextP = State.currentP + dir;
+          if (nextP < 0) return;
+          State.currentP = nextP;
+          (await State.ensureEnoughPages()) ? Renderer.renderApp() : Renderer.updateViewport();
+          window.scrollTo({ top: 0, behavior: 'smooth' }); // Reset read progress for new pages!
+          StorageManager.requestSave();
+        },
+        jumpToPair(idx) {
+          State.currentP = idx;
+          Renderer.updateViewport();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          StorageManager.requestSave();
+        },
+        moveBlockDOM(id, targetId, insertAfter) {
+          const src = State.getBlockCoords(id), tgt = State.getBlockCoords(targetId);
+          if (!src || !tgt) return;
+          
+          const srcArray = src.isRegion ? State.regionPages[src.pageId] : State.pages[src.pIdx];
+          const tgtArray = tgt.isRegion ? State.regionPages[tgt.pageId] : State.pages[tgt.pIdx];
+          
+          const [moved] = srcArray.splice(src.bIdx, 1);
+          const sameArray = (src.isRegion === tgt.isRegion) && (src.isRegion ? src.pageId === tgt.pageId : src.pIdx === tgt.pIdx);
+          let iIdx = tgt.bIdx - (sameArray && src.bIdx < tgt.bIdx ? 1 : 0) + (insertAfter ? 1 : 0);
+          
+          tgtArray.splice(iIdx, 0, moved);
+          State.rebuildIndex();
+          
+          if (src.isRegion) Renderer.renderRegion(src.pageId); else Renderer.renderPage(src.pIdx);
+          if (!sameArray) {
+            if (tgt.isRegion) Renderer.renderRegion(tgt.pageId); else Renderer.renderPage(tgt.pIdx);
+          }
+          StorageManager.requestSave();
+        },
+      };
+const EventController = {
+        imgDrag: { id: null, clickOffsetX: 0, clickOffsetY: 0, origPointerEvents: "", origZIndex: "", origTransition: "" },
+        draggedId: null,
+        regionDrag: { id: null, type: null, offsetX: 0, offsetY: 0, startX: 0, startY: 0, startW: 0, startH: 0 },
+
+        init() {
+          document.addEventListener("input", e => e.target.classList.contains("bullet-text") && EditorEngine.updateText(e.target.closest(".bullet-block").dataset.id, e.target.textContent, e.target.closest(".bullet-block")));
+          document.addEventListener("keydown", this.handleKeydown);
+          const addMousedown = fn => document.addEventListener("mousedown", fn);
+          const addMousemove = fn => window.addEventListener("mousemove", fn);
+          const addMouseup = fn => window.addEventListener("mouseup", fn);
+
+          addMousedown(this.handleHandleMouseDown.bind(this));
+          addMousedown(this.handleImgMouseDown);
+          addMousedown(this.handleRegionMouseDown);
+          addMousedown(this.handleGlobalMouseDown);
+
+          addMousemove(this.handleImgMouseMove);
+          addMousemove(this.handleRegionMouseMove);
+          addMousemove(this.handleGlobalMouseMove);
+
+          addMouseup(this.handleImgMouseUp);
+          addMouseup(this.handleRegionMouseUp);
+          addMouseup(this.handleGlobalMouseUp);
+
+          document.addEventListener("paste", this.handlePaste.bind(this));
+          document.addEventListener("contextmenu", this.handleContextMenu);
+          document.addEventListener("drop", this.handleDrop);
+          document.addEventListener("dblclick", this.handleImgDblClick);
+
+          document.addEventListener("dragstart", this.handleDragStart);
+          document.addEventListener("dragover", this.handleDragOver);
+          document.addEventListener("dragend", this.handleDragEnd);
+          this.initScrubber();
+        },
+        handleDrop: (e) => {
+          try {
+            const data = JSON.parse(e.dataTransfer.getData("application/json"));
+            if (data && data.type === "sticker") {
+              e.preventDefault();
+              ImageManager.spawn(data.src, e.clientX, e.clientY);
+              return;
+            }
+          } catch (err) {}
+
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            let hasImages = false;
+            for (let file of e.dataTransfer.files) {
+              if (file.type.startsWith("image/")) {
+                hasImages = true;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                  if (StickerBook.isOpen || (e.target && e.target.closest("#sticker-drawer"))) {
+                    StickerBook.saveSticker(ev.target.result);
+                  } else {
+                    ImageManager.spawn(ev.target.result, e.clientX, e.clientY);
+                  }
+                };
+                reader.readAsDataURL(file);
+              }
+            }
+            if (hasImages) e.preventDefault();
+          }
+        },
+        handleContextMenu: (e) => {
+          const draggableImg = e.target.closest(".draggable-image");
+          const stickerItem = e.target.closest(".sticker-item");
+          const regionHeader = e.target.closest(".region-header");
+          
+          if (regionHeader) {
+            e.preventDefault();
+            const regionBox = regionHeader.closest(".region-box");
+            const id = regionBox.dataset.regionId;
+            ContextMenu.show(e.clientX, e.clientY, [
+              { label: "🗑️ Delete Region", danger: true, action: () => {
+                const idx = State.meta.regions.findIndex(r => r.id === id);
+                if (idx !== -1) {
+                  const r = State.meta.regions[idx];
+                  State.meta.regions.splice(idx, 1);
+                  delete State.regionPages[r.pageId];
+                  FileSystemAPI.trashJson(`pages/${r.pageId}.json`);
+                  regionBox.remove();
+                  State.rebuildIndex();
+                  StorageManager.requestSave();
+                }
+              }}
+            ]);
+          } else if (draggableImg) {
+            e.preventDefault();
+            const id = draggableImg.dataset.imgId;
+            const imgData = State.meta.placedImages.find(i => i.id === id);
+            if (!imgData) return;
+            
+            const isLocked = imgData.locked;
+            
+            ContextMenu.show(e.clientX, e.clientY, [
+              { label: isLocked ? "🔓 Unlock Position" : "🔒 Lock Position", action: () => ImageManager.updateImage(id, { locked: !isLocked }) },
+              { label: "🔄 Rotate 45°", action: () => ImageManager.updateImage(id, { rotation: ((imgData.rotation || 0) + 45) % 360 }) },
+              { label: "🔼 Bring Forward", action: () => {
+                const layers = ['background', 'paper', 'sticker', 'floating', 'focus'];
+                const curr = imgData.layerBucket || 'sticker';
+                const next = layers[Math.min(layers.length - 1, layers.indexOf(curr) + 1)];
+                ImageManager.updateImage(id, { layerBucket: next });
+              }},
+              { label: "🔽 Send Backward", action: () => {
+                const layers = ['background', 'paper', 'sticker', 'floating', 'focus'];
+                const curr = imgData.layerBucket || 'sticker';
+                const prev = layers[Math.max(0, layers.indexOf(curr) - 1)];
+                ImageManager.updateImage(id, { layerBucket: prev });
+              }},
+              { label: "👻 Change Opacity", action: () => {
+                const opacities = [1, 0.75, 0.5, 0.25];
+                const current = imgData.opacity !== undefined ? imgData.opacity : 1;
+                const next = opacities[(opacities.indexOf(current) + 1) % opacities.length];
+                ImageManager.updateImage(id, { opacity: next });
+              }},
+              { label: "🗑️ Delete Image", danger: true, action: () => ImageManager.removeImage(id) }
+            ]);
+          } else if (stickerItem) {
+            e.preventDefault();
+            ContextMenu.show(e.clientX, e.clientY, [
+              { label: "🗑️ Delete Sticker", danger: true, action: () => StickerBook.removeSticker(stickerItem.dataset.stickerId) }
+            ]);
+          }
+        },
+        handlePaste(e) {
+          const items = e.clipboardData?.items;
+          let imagePasted = false;
+          if (items) {
+            for (let item of items) {
+              if (item.type.startsWith("image/")) {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                  if (StickerBook.isOpen || (e.target && e.target.closest("#sticker-drawer"))) {
+                    StickerBook.saveSticker(ev.target.result);
+                  } else {
+                    ImageManager.spawn(ev.target.result);
+                  }
+                };
+                reader.readAsDataURL(item.getAsFile());
+                imagePasted = true;
+              }
+            }
+          }
+          if (imagePasted) return e.preventDefault();
+          if (!e.target.classList.contains("bullet-text")) return;
+          e.preventDefault();
+          document.execCommand("insertText", false, (e.originalEvent || e).clipboardData.getData("text/plain"));
+        },
+        async handleImgDblClick(e) {
+          if (e.target.classList.contains("draggable-image")) {
+            // We fetch the real src back from the images folder before saving to drawer
+            const file = await FileSystemAPI.readJson(`images/${e.target.dataset.imgId}.json`);
+            if(file) StickerBook.saveSticker(file.src);
+            e.target.style.scale = "1.2";
+            setTimeout(() => (e.target.style.scale = "1"), 200);
+          }
+        },
+        handleImgMouseDown: (e) => {
+          if (!e.target.classList.contains("draggable-image")) return;
+          if (e.target.dataset.locked === "true") return;
+          
+          const rect = e.target.getBoundingClientRect();
+          EventController.imgDrag = {
+            id: e.target.dataset.imgId,
+            clickOffsetX: e.clientX - rect.left,
+            clickOffsetY: e.clientY - rect.top,
+            origPointerEvents: e.target.style.pointerEvents,
+            origZIndex: e.target.style.zIndex,
+            origTransition: e.target.style.transition
+          };
+          e.target.style.pointerEvents = "none";
+          e.target.style.zIndex = "100";
+          e.target.style.transition = "none";
+          e.preventDefault(); e.stopPropagation();
+        },
+        handleImgMouseMove: (e) => {
+          const drag = EventController.imgDrag;
+          if (!drag.id) return;
+          const img = qs(`img[data-img-id="${drag.id}"]`);
+          if (img) {
+            const wrapper = img.closest('.page-wrapper');
+            if (wrapper) {
+              const wrapperRect = wrapper.getBoundingClientRect();
+              const finalLeft = (e.clientX - drag.clickOffsetX) - wrapperRect.left;
+              const finalTop = (e.clientY - drag.clickOffsetY) - wrapperRect.top;
+              img.style.left = `${finalLeft}px`;
+              img.style.top = `${finalTop}px`;
+              img.style.transform = 'none';
+            }
+          }
+        },
+        handleImgMouseUp: (e) => {
+          const drag = EventController.imgDrag;
+          if (!drag.id) return;
+
+          const img = qs(`img[data-img-id="${drag.id}"]`);
+          const imgData = State.meta.placedImages.find(i => i.id === drag.id);
+
+          if (img && imgData) {
+            img.style.pointerEvents = drag.origPointerEvents || "";
+            img.style.zIndex = drag.origZIndex || "";
+            img.style.transition = drag.origTransition || "";
+
+            const wrappers = Array.from(qsa('.page-wrapper'));
+            const closestWrapper = wrappers.find(w => {
+              const r = w.getBoundingClientRect();
+              return e.clientX >= r.left && e.clientX <= r.right;
+            }) || img.closest('.page-wrapper');
+            
+            if (closestWrapper) {
+              imgData.pageId = closestWrapper.dataset.pageId;
+              if (img.parentElement !== closestWrapper) closestWrapper.appendChild(img);
+              
+              const wrapperRect = closestWrapper.getBoundingClientRect();
+              imgData.left = (e.clientX - drag.clickOffsetX) - wrapperRect.left;
+              imgData.top = (e.clientY - drag.clickOffsetY) - wrapperRect.top;
+            }
+            
+            StorageManager.requestSave();
+            ImageManager.updateImagePositionDOM(imgData, img);
+          }
+          EventController.imgDrag.id = null;
+        },
+        handleKeydown(e) {
+          const k = e.key, alt = e.altKey, ctrl = e.ctrlKey, shift = e.shiftKey;
+          if (!e.target.classList.contains("bullet-text")) {
+            if (k === "ArrowLeft" || k === "ArrowRight") { e.preventDefault(); EditorEngine.changePage(k === "ArrowLeft" ? -1 : 1); }
+            return;
+          }
+          if (k === "Escape") return e.preventDefault(), e.target.blur();
+          const bId = e.target.closest(".bullet-block").dataset.id;
+
+          if (alt && k === "ArrowLeft") return e.preventDefault(), EditorEngine.changePage(-1);
+          if (alt && (k === "ArrowRight" || k === "Enter")) return e.preventDefault(), EditorEngine.changePage(1);
+          if (ctrl && k === "Enter") return e.preventDefault(), EditorEngine.cycleType(bId);
+          if (k === "Enter" && !shift) return e.preventDefault(), EditorEngine.splitBlock(bId, SelectionManager.getCaretPos(e.target));
+          if (k === "Tab") return e.preventDefault(), EditorEngine.indentBlock(bId, shift ? -1 : 1);
+          if (k === "Backspace" && SelectionManager.getCaretPos(e.target) === 0) {
+            e.preventDefault();
+            const c = State.getBlockCoords(bId);
+            c.block.type !== "text" ? EditorEngine.setBlockType(bId, "text") : (c.bIdx > 0 && EditorEngine.mergeWithPrevious(bId));
+            return;
+          }
+          if (k === "ArrowUp" || k === "ArrowDown") {
+            const sel = window.getSelection();
+            if (!sel.rangeCount) return;
+            const r = sel.getRangeAt(0).getBoundingClientRect(), elR = e.target.getBoundingClientRect();
+            if (k === "ArrowUp" && r.top - elR.top < 24) return e.preventDefault(), EditorEngine.navigateVertical(bId, -1);
+            if (k === "ArrowDown" && elR.bottom - r.bottom < 24) return e.preventDefault(), EditorEngine.navigateVertical(bId, 1);
+          }
+        },
+        handleHandleMouseDown(e) {
+          const handle = e.target.closest(".bullet-handle");
+          if (handle) {
+            const block = handle.closest(".bullet-block");
+            block.setAttribute("draggable", "true");
+            const clean = () => { block.setAttribute("draggable", "false"); document.removeEventListener("mouseup", clean); handle.removeEventListener("mouseleave", clean); };
+            document.addEventListener("mouseup", clean); handle.addEventListener("mouseleave", clean);
+          }
+        },
+        handleRegionMouseDown: (e) => {
+          const resizer = e.target.closest('.region-resizer');
+          if (resizer) {
+            const regionBox = resizer.closest('.region-box');
+            EventController.regionDrag = {
+              id: regionBox.dataset.regionId, type: 'resize',
+              startX: e.clientX, startY: e.clientY,
+              startW: regionBox.offsetWidth, startH: regionBox.offsetHeight
+            };
+            e.preventDefault(); e.stopPropagation();
+            return;
+          }
+          const header = e.target.closest('.region-header');
+          if (header) {
+            const regionBox = header.closest('.region-box');
+            const rect = regionBox.getBoundingClientRect();
+            EventController.regionDrag = {
+              id: regionBox.dataset.regionId, type: 'move',
+              offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top
+            };
+            e.preventDefault(); e.stopPropagation();
+          }
+        },
+        handleRegionMouseMove: (e) => {
+          const drag = EventController.regionDrag;
+          if (!drag.id) return;
+          const regionBox = qs(`.region-box[data-region-id="${drag.id}"]`);
+          if (!regionBox) return;
+          
+          if (drag.type === 'move') {
+            const wrapper = regionBox.closest('.page-wrapper');
+            const wrapperRect = wrapper.getBoundingClientRect();
+            regionBox.style.left = `${(e.clientX - drag.offsetX) - wrapperRect.left}px`;
+            regionBox.style.top = `${(e.clientY - drag.offsetY) - wrapperRect.top}px`;
+          } else if (drag.type === 'resize') {
+            regionBox.style.width = `${Math.max(100, drag.startW + (e.clientX - drag.startX))}px`;
+            regionBox.style.height = `${Math.max(100, drag.startH + (e.clientY - drag.startY))}px`;
+          }
+        },
+        handleRegionMouseUp: (e) => {
+          const drag = EventController.regionDrag;
+          if (!drag.id) return;
+          const regionBox = qs(`.region-box[data-region-id="${drag.id}"]`);
+          const regionData = State.meta.regions.find(r => r.id === drag.id);
+          if (regionBox && regionData) {
+            if (drag.type === 'move') {
+              const wrappers = Array.from(qsa('.page-wrapper'));
+              const closestWrapper = wrappers.find(w => {
+                const r = w.getBoundingClientRect();
+                return e.clientX >= r.left && e.clientX <= r.right;
+              }) || regionBox.closest('.page-wrapper');
+              
+              if (closestWrapper) {
+                regionData.surfaceId = closestWrapper.dataset.pageId;
+                if (regionBox.parentElement !== closestWrapper) closestWrapper.appendChild(regionBox);
+                const wrapperRect = closestWrapper.getBoundingClientRect();
+                regionData.x = (e.clientX - drag.offsetX) - wrapperRect.left;
+                regionData.y = (e.clientY - drag.offsetY) - wrapperRect.top;
+                regionBox.style.left = `${regionData.x}px`;
+                regionBox.style.top = `${regionData.y}px`;
+              }
+            } else if (drag.type === 'resize') {
+              regionData.width = regionBox.offsetWidth;
+              regionData.height = regionBox.offsetHeight;
+            }
+            StorageManager.requestSave();
+          }
+          EventController.regionDrag = { id: null, type: null, offsetX: 0, offsetY: 0, startX: 0, startY: 0, startW: 0, startH: 0 };
+        },
+        handleGlobalMouseDown: (e) => {
+          if (e.button === 0) RegionManager.startDrawing(e);
+        },
+        handleGlobalMouseMove: (e) => {
+          RegionManager.draw(e);
+        },
+        handleGlobalMouseUp: (e) => {
+          RegionManager.stopDrawing(e);
+        },
+        handleDragStart(e) {
+          const block = e.target.closest(".bullet-block");
+          if (block && block.getAttribute("draggable") === "true") {
+            EventController.draggedId = block.dataset.id;
+            Promise.resolve().then(() => block.classList.add("dragging"));
+          } else e.preventDefault();
+        },
+        handleDragOver(e) {
+          e.preventDefault();
+          const target = e.target.closest(".bullet-block"), draggedId = EventController.draggedId;
+          if (target && target.dataset.id !== draggedId) {
+            const rect = target.getBoundingClientRect(), el = qs(`[data-id="${draggedId}"]`);
+            target.parentNode.insertBefore(el, e.clientY > rect.top + rect.height / 2 ? target.nextSibling : target);
+          }
+        },
+        handleDragEnd() {
+          const el = qs(`[data-id="${EventController.draggedId}"]`);
+          if (el) {
+            el.classList.remove("dragging"); el.setAttribute("draggable", "false");
+            const prev = el.previousElementSibling, next = el.nextElementSibling, list = el.closest(".bujo-list");
+            if (list) prev ? EditorEngine.moveBlockDOM(EventController.draggedId, prev.dataset.id, true) : next && EditorEngine.moveBlockDOM(EventController.draggedId, next.dataset.id, false);
+          }
+          EventController.draggedId = null;
+        },
+        initScrubber() {
+          const ind = gid("page-indicator");
+          let isScrubbing = false;
+          const scrub = (e) => {
+            const r = ind.getBoundingClientRect(), pC = State.pages.length;
+            if (pC <= 1) return;
+            const idx = Math.min(Math.floor((Math.max(0, Math.min(e.clientX - r.left, r.width)) / r.width) * pC), pC - 1);
+            if (State.currentP !== idx) {
+              State.currentP = idx;
+              Renderer.updateViewport();
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+          };
+          ind.addEventListener("pointerdown", (e) => { isScrubbing = true; gid("app").style.transitionDuration = "0s"; ind.setPointerCapture(e.pointerId); scrub(e); });
+          ind.addEventListener("pointermove", (e) => isScrubbing && scrub(e));
+          ind.addEventListener("pointerup", (e) => { isScrubbing = false; gid("app").style.transitionDuration = ""; ind.releasePointerCapture(e.pointerId); StorageManager.requestSave(); });
+        },
+      };
+async function startApp() {
+        await State.init();
+        StickerBook.init();
+        Renderer.renderApp();
+        EventController.init();
+      }
+      startApp();
+    </script>
+  </body>
 </html>
