@@ -158,10 +158,11 @@
                     let changed = false;
                     while (this.pages.length > 2 && Math.floor((this.pages.length - 2) / 2) !== Math.floor(this.currentP / 2)) {
                         const i = this.pages.length - 2;
-                        const isEmpty = (p) => p.every(b => b.text.trim() === "" && b.type === "text");
-                        if (isEmpty(this.pages[i]) && isEmpty(this.pages[i + 1] || [])) {
-                            await FileSystemAPI.trashJson(`pages/${this.meta.pageOrder[i]}.json`);
-                            await FileSystemAPI.trashJson(`pages/${this.meta.pageOrder[i + 1]}.json`);
+                        const p1Id = this.meta.pageOrder[i], p2Id = this.meta.pageOrder[i + 1];
+                        const isEmpty = (p, pId) => p && p.every(b => b.text.trim() === "" && b.type === "text") && !this.meta.placedImages.some(img => img.pageId === pId);
+                        if (isEmpty(this.pages[i], p1Id) && isEmpty(this.pages[i + 1] || [], p2Id)) {
+                            await FileSystemAPI.trashJson(`pages/${p1Id}.json`);
+                            if (p2Id) await FileSystemAPI.trashJson(`pages/${p2Id}.json`);
                             this.pages.splice(i, 2); this.meta.pageOrder.splice(i, 2); this.meta.scrolls.splice(i, 2);
                             changed = true;
                         } else break;
@@ -212,6 +213,40 @@
             // ==========================================
             // 🎒 STICKER BOOK & 🖼️ IMAGE MANAGER
             // ==========================================
+            const ContextMenu = {
+                show(x, y, items) {
+                    this.hide();
+                    const menu = document.createElement("div");
+                    menu.id = "custom-context-menu";
+                    menu.className = "fixed bg-white border border-zinc-200 shadow-xl rounded-md py-1 z-[100] min-w-[150px]";
+                    menu.style.left = `${x}px`;
+                    menu.style.top = `${y}px`;
+                    
+                    items.forEach(item => {
+                        const btn = document.createElement("button");
+                        btn.className = `w-full text-left px-4 py-2 hover:bg-zinc-100 text-sm ${item.danger ? 'text-red-600' : 'text-zinc-800'}`;
+                        btn.innerHTML = item.label;
+                        btn.onclick = (e) => {
+                            e.stopPropagation();
+                            item.action();
+                            this.hide();
+                        };
+                        menu.appendChild(btn);
+                    });
+                    document.body.appendChild(menu);
+                    
+                    setTimeout(() => document.addEventListener("click", this.hideBound), 0);
+                    setTimeout(() => document.addEventListener("contextmenu", this.hideBound), 0);
+                },
+                hideBound: () => ContextMenu.hide(),
+                hide() {
+                    const menu = document.getElementById("custom-context-menu");
+                    if (menu) menu.remove();
+                    document.removeEventListener("click", ContextMenu.hideBound);
+                    document.removeEventListener("contextmenu", ContextMenu.hideBound);
+                }
+            };
+
             const StickerBook = {
                 isOpen: false,
                 init() {
@@ -236,6 +271,15 @@
                     StorageManager.requestSave();
                     this.render();
                 },
+                async removeSticker(id) {
+                    const idx = State.meta.stickers.indexOf(id);
+                    if (idx !== -1) {
+                        State.meta.stickers.splice(idx, 1);
+                        StorageManager.requestSave();
+                        this.render();
+                        await FileSystemAPI.trashJson(`images/sticker-${id}.json`);
+                    }
+                },
                 async render() {
                     const grid = document.getElementById("sticker-grid");
                     if (State.meta.stickers.length === 0) {
@@ -247,9 +291,14 @@
                         const file = await FileSystemAPI.readJson(`images/sticker-${id}.json`);
                         if (file && file.src) {
                             const div = document.createElement("div");
-                            div.className = "cursor-pointer group flex items-center justify-center p-2 bg-white rounded-lg shadow-sm border border-zinc-100 hover:shadow-md hover:-translate-y-1 transition-all";
+                            div.className = "sticker-item cursor-pointer group flex items-center justify-center p-2 bg-white rounded-lg shadow-sm border border-zinc-100 hover:shadow-md hover:-translate-y-1 transition-all";
+                            div.dataset.stickerId = id;
+                            div.draggable = true;
+                            div.ondragstart = (e) => {
+                                e.dataTransfer.setData("application/json", JSON.stringify({ type: "sticker", src: file.src }));
+                            };
                             div.onclick = () => ImageManager.spawn(file.src);
-                            div.innerHTML = `<img src="${file.src}" class="max-w-full max-h-24 object-contain filter drop-shadow-sm group-hover:drop-shadow-md">`;
+                            div.innerHTML = `<img src="${file.src}" draggable="false" class="max-w-full max-h-24 object-contain filter drop-shadow-sm group-hover:drop-shadow-md">`;
                             grid.appendChild(div);
                         }
                     }
@@ -257,22 +306,30 @@
             };
 
             const ImageManager = {
-                async spawn(src) {
+                async spawn(src, clientX, clientY) {
                     const id = crypto.randomUUID();
                     // Store image content securely in /images/
                     await FileSystemAPI.writeJsonAtomic(`images/${id}.json`, { src });
 
                     // Default affix to left page of current spread, using percentages for responsiveness!
-                    const pIdx = State.currentP;
-                    const pageId = State.meta.pageOrder[pIdx];
+                    let left = 20, top = window.scrollY + 100, pageId = State.meta.pageOrder[State.currentP];
 
-                    const imgData = {
-                        id,
-                        pageId,
-                        left: 20, // 20% relative to the page wrapper width!
-                        top: window.scrollY + 100
-                    };
+                    if (clientX !== undefined && clientY !== undefined) {
+                        const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
+                        const wrapper = wrappers.find(w => {
+                            const r = w.getBoundingClientRect();
+                            return clientX >= r.left && clientX <= r.right;
+                        }) || wrappers[0];
+                        
+                        if (wrapper) {
+                            pageId = wrapper.dataset.pageId;
+                            const r = wrapper.getBoundingClientRect();
+                            left = ((clientX - r.left) / r.width) * 100;
+                            top = clientY - r.top; // Relative to the top of the wrapper
+                        }
+                    }
 
+                    const imgData = { id, pageId, left, top };
                     State.meta.placedImages.push(imgData);
                     StorageManager.requestSave();
                     this.renderImage(imgData);
@@ -297,6 +354,16 @@
                 restoreAll() {
                     document.querySelectorAll(".draggable-image").forEach(el => el.remove());
                     State.meta.placedImages.forEach(data => this.renderImage(data));
+                },
+                removeImage(id) {
+                    const idx = State.meta.placedImages.findIndex(i => i.id === id);
+                    if (idx !== -1) {
+                        State.meta.placedImages.splice(idx, 1);
+                        StorageManager.requestSave();
+                        const el = document.querySelector(`img[data-img-id="${id}"]`);
+                        if (el) el.remove();
+                        FileSystemAPI.trashJson(`images/${id}.json`);
+                    }
                 },
             };
 
@@ -463,6 +530,9 @@
                     document.addEventListener("mousedown", this.handleHandleMouseDown);
                     document.addEventListener("paste", this.handlePaste);
 
+                    document.addEventListener("contextmenu", this.handleContextMenu);
+                    document.addEventListener("drop", this.handleDrop);
+
                     document.addEventListener("mousedown", this.handleImgMouseDown);
                     document.addEventListener("dblclick", this.handleImgDblClick);
                     window.addEventListener("mousemove", this.handleImgMouseMove);
@@ -473,6 +543,51 @@
                     document.addEventListener("dragend", this.handleDragEnd);
                     this.initScrubber();
                 },
+                handleDrop: (e) => {
+                    try {
+                        const data = JSON.parse(e.dataTransfer.getData("application/json"));
+                        if (data && data.type === "sticker") {
+                            e.preventDefault();
+                            ImageManager.spawn(data.src, e.clientX, e.clientY);
+                            return;
+                        }
+                    } catch (err) {}
+
+                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                        let hasImages = false;
+                        for (let file of e.dataTransfer.files) {
+                            if (file.type.startsWith("image/")) {
+                                hasImages = true;
+                                const reader = new FileReader();
+                                reader.onload = (ev) => {
+                                    if (StickerBook.isOpen || (e.target && e.target.closest("#sticker-drawer"))) {
+                                        StickerBook.saveSticker(ev.target.result);
+                                    } else {
+                                        ImageManager.spawn(ev.target.result, e.clientX, e.clientY);
+                                    }
+                                };
+                                reader.readAsDataURL(file);
+                            }
+                        }
+                        if (hasImages) e.preventDefault();
+                    }
+                },
+                handleContextMenu: (e) => {
+                    const draggableImg = e.target.closest(".draggable-image");
+                    const stickerItem = e.target.closest(".sticker-item");
+                    
+                    if (draggableImg) {
+                        e.preventDefault();
+                        ContextMenu.show(e.clientX, e.clientY, [
+                            { label: "🗑️ Delete Image", danger: true, action: () => ImageManager.removeImage(draggableImg.dataset.imgId) }
+                        ]);
+                    } else if (stickerItem) {
+                        e.preventDefault();
+                        ContextMenu.show(e.clientX, e.clientY, [
+                            { label: "🗑️ Delete Sticker", danger: true, action: () => StickerBook.removeSticker(stickerItem.dataset.stickerId) }
+                        ]);
+                    }
+                },
                 handlePaste(e) {
                     const items = e.clipboardData?.items;
                     let imagePasted = false;
@@ -480,7 +595,13 @@
                         for (let item of items) {
                             if (item.type.startsWith("image/")) {
                                 const reader = new FileReader();
-                                reader.onload = (ev) => ImageManager.spawn(ev.target.result);
+                                reader.onload = (ev) => {
+                                    if (StickerBook.isOpen || (e.target && e.target.closest("#sticker-drawer"))) {
+                                        StickerBook.saveSticker(ev.target.result);
+                                    } else {
+                                        ImageManager.spawn(ev.target.result);
+                                    }
+                                };
                                 reader.readAsDataURL(item.getAsFile());
                                 imagePasted = true;
                             }
