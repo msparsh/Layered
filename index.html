@@ -423,7 +423,8 @@ const UI = {
           <div class="w-1.5 h-1.5 rounded-full bg-zinc-600"></div>
         </div>
       </div>
-      <div class="region-content flex-1 overflow-y-auto p-4 cursor-text" style="touch-action: pan-y;">
+      <!-- 🛠️ THE FIX: Replaced p-4 with py-4 pr-4 pl-10 -->
+      <div class="region-content flex-1 overflow-y-auto py-4 pr-4 pl-10 cursor-text" style="touch-action: pan-y;">
         <div class="bujo-list min-h-full" data-region-page-id="${r.pageId}"></div>
       </div>
       <div class="region-resizer absolute bottom-0 right-0 w-5 h-5 cursor-se-resize flex items-end justify-end p-1 opacity-0 hover:opacity-100 transition-opacity">
