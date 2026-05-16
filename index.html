@@ -10,12 +10,6 @@
             body { overflow-x: hidden; overflow-y: auto; background-color: #fafafa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
             [contenteditable]:empty::before { content: "\FEFF"; }
 
-            /* 📓 Dot Grid Style */
-            .dot-grid {
-                background-image: radial-gradient(circle at center, #d4d4d8 1.5px, transparent 1.5px);
-                background-size: calc(50vw / 26) calc(50vw / 26);
-                background-position: calc(-25vw / 26) calc(-25vw / 26);
-            }
 
             .bullet-block { animation: slideIn 0.15s ease-out forwards; cursor: default; }
             @keyframes slideIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
@@ -24,6 +18,7 @@
             .bullet-handle:active { cursor: grabbing; }
             .dragging { opacity: 0.3; }
             .bullet-text { cursor: text; user-select: text; word-break: break-word; -webkit-hyphens: auto; hyphens: auto; }
+            .region-content::-webkit-scrollbar { display: none; }
 
             /* 📸 Draggable Image Styles */
             .draggable-image { position: absolute; top: 0; left: 0; cursor: grab; max-width: 300px; filter: drop-shadow(0px 8px 12px rgba(0, 0, 0, 0.15)); user-select: none; transition: scale 0.2s ease, rotate 0.2s ease, opacity 0.2s ease; }
@@ -95,7 +90,7 @@
                                 delete img.src; // Keep meta clean!
                             }
                             if (!img.pageId) {
-                                img.pageId = m.pageOrder[Math.floor((m.currentP || 0) / 2) * 2] || m.pageOrder[0];
+                                img.pageId = m.pageOrder[m.currentP || 0] || m.pageOrder[0];
                             }
                             
                             
@@ -115,18 +110,23 @@
                         }));
                     }
 
-                    return { version: 3, currentP: 0, pageOrder: [], scrolls: [], stickers: [], placedImages: [], lines: [], ...m };
+                    return { version: 4, currentP: 0, pageOrder: [], scrolls: [], stickers: [], placedImages: [], regions: [], lines: [], ...m };
                 },
                 async executeSave(forceRender = false) {
                     if (this.isSaving) return (this.needsSave = true);
                     this.isSaving = true; this.needsSave = false;
                     try {
                         const layoutChanged = await State.cleanEmptySpreads();
-                        const p = Math.floor(State.currentP / 2) * 2;
+                        const p = State.currentP;
                         const { pageOrder } = State.meta;
 
                         if (pageOrder[p]) await FileSystemAPI.writeJsonAtomic(`pages/${pageOrder[p]}.json`, State.pages[p]);
-                        if (pageOrder[p + 1]) await FileSystemAPI.writeJsonAtomic(`pages/${pageOrder[p + 1]}.json`, State.pages[p + 1]);
+
+                        for (const region of State.meta.regions) {
+                            if (State.regionPages[region.pageId]) {
+                                await FileSystemAPI.writeJsonAtomic(`pages/${region.pageId}.json`, State.regionPages[region.pageId]);
+                            }
+                        }
 
                         State.meta.currentP = State.currentP;
                         await FileSystemAPI.writeJsonAtomic("meta.json", State.meta);
@@ -151,7 +151,7 @@
             const MD_MAP = { "* ": "task", "x ": "completed", "> ": "migrated", "< ": "scheduled", "o ": "event", "- ": "note", "# ": "h1", "## ": "h2", "### ": "h3", "#### ": "h4", "##### ": "h5", "###### ": "h6" };
 
             const State = {
-                meta: null, pages: [], currentP: 0, blockMap: new Map(),
+                meta: null, pages: [], regionPages: {}, currentP: 0, blockMap: new Map(),
                 createBlock: (text = "", depth = 0, type = "text") => ({ id: crypto.randomUUID(), type, text, depth }),
                 async init() {
                     this.meta = await StorageManager.loadNotebookMeta();
@@ -162,35 +162,56 @@
                     this.pages = await Promise.all(this.meta.pageOrder.map(id =>
                         FileSystemAPI.readJson(`pages/${id}.json`).then(d => d || [this.createBlock()])
                     ));
+                    
+                    this.pages.forEach((pageBlocks, i) => {
+                        const hasContent = pageBlocks.length > 1 || (pageBlocks[0] && pageBlocks[0].text.trim() !== "");
+                        if (hasContent && !this.meta.regions.some(r => r.surfaceId === this.meta.pageOrder[i])) {
+                            const regionPageId = `page-${crypto.randomUUID()}`;
+                            this.meta.regions.push({
+                                id: crypto.randomUUID(), surfaceId: this.meta.pageOrder[i], x: 50, y: 100, width: 400, height: 500, pageId: regionPageId
+                            });
+                            this.regionPages[regionPageId] = [...pageBlocks];
+                            this.pages[i] = [this.createBlock()];
+                        }
+                    });
+
+                    await Promise.all(this.meta.regions.map(async r => {
+                        if (!this.regionPages[r.pageId]) {
+                            this.regionPages[r.pageId] = await FileSystemAPI.readJson(`pages/${r.pageId}.json`) || [this.createBlock()];
+                        }
+                    }));
+                    
                     this.currentP = this.meta.currentP || 0;
                     this.rebuildIndex();
                 },
                 rebuildIndex() {
                     this.blockMap.clear();
                     this.pages.forEach((page, pIdx) => page.forEach((block, bIdx) => this.blockMap.set(block.id, { pIdx, bIdx, block })));
+                    Object.entries(this.regionPages).forEach(([pageId, pageBlocks]) => {
+                        pageBlocks.forEach((block, bIdx) => this.blockMap.set(block.id, { isRegion: true, pageId, bIdx, block }));
+                    });
                 },
                 getBlockCoords: (id) => State.blockMap.get(id) || null,
                 async cleanEmptySpreads() {
                     let changed = false;
-                    while (this.pages.length > 2 && Math.floor((this.pages.length - 2) / 2) !== Math.floor(this.currentP / 2)) {
-                        const i = this.pages.length - 2;
-                        const p1Id = this.meta.pageOrder[i], p2Id = this.meta.pageOrder[i + 1];
-                        const isEmpty = (p, pId) => p && p.every(b => b.text.trim() === "" && b.type === "text") && !this.meta.placedImages.some(img => img.pageId === pId);
-                        if (isEmpty(this.pages[i], p1Id) && isEmpty(this.pages[i + 1] || [], p2Id)) {
-                            await FileSystemAPI.trashJson(`pages/${p1Id}.json`);
-                            if (p2Id) await FileSystemAPI.trashJson(`pages/${p2Id}.json`);
-                            this.pages.splice(i, 2); this.meta.pageOrder.splice(i, 2); this.meta.scrolls.splice(i, 2);
+                    while (this.pages.length > 1 && (this.pages.length - 1) !== this.currentP) {
+                        const i = this.pages.length - 1;
+                        const pId = this.meta.pageOrder[i];
+                        const isEmpty = (p, pId) => p && p.every(b => b.text.trim() === "" && b.type === "text") && !this.meta.placedImages.some(img => img.pageId === pId) && !this.meta.regions.some(r => r.surfaceId === pId);
+                        if (isEmpty(this.pages[i], pId)) {
+                            await FileSystemAPI.trashJson(`pages/${pId}.json`);
+                            this.pages.splice(i, 1); this.meta.pageOrder.splice(i, 1); this.meta.scrolls.splice(i, 1);
                             changed = true;
                         } else break;
                     }
-                    if (this.currentP >= this.pages.length) { this.currentP = Math.max(0, this.pages.length - 2); changed = true; }
+                    if (this.currentP >= this.pages.length) { this.currentP = Math.max(0, this.pages.length - 1); changed = true; }
                     if (changed) this.rebuildIndex();
                     return changed;
                 },
                 async ensureEnoughPages() {
                     if (this.currentP >= this.pages.length) {
-                        this.meta.pageOrder.push(`page-${crypto.randomUUID()}`, `page-${crypto.randomUUID()}`);
-                        this.pages.push([this.createBlock()], [this.createBlock()]);
+                        this.meta.pageOrder.push(`page-${crypto.randomUUID()}`);
+                        this.pages.push([this.createBlock()]);
                         this.rebuildIndex();
                         await FileSystemAPI.writeJsonAtomic("meta.json", this.meta);
                         return true;
@@ -413,157 +434,143 @@
             };
 
             // ==========================================
-            // ✏️ DRAWING MANAGER (Dot Grid Lines)
+            // 📦 REGION MANAGER (Spatial Writing)
             // ==========================================
-            const DrawingManager = {
-                isDrawing: false,
-                currentPolyline: null,
-                currentPoints: [],
-                svgLayer: null,
-                gridSize: 0,
-                pageId: null,
-
-                getGridSnap(clientX, clientY, wrapper) {
-                    const rect = wrapper.getBoundingClientRect();
-                    this.gridSize = rect.width / 26;
-                    const x = clientX - rect.left;
-                    const y = clientY - rect.top;
-                    return {
-                        x: Math.round(x / this.gridSize) * this.gridSize,
-                        y: Math.round(y / this.gridSize) * this.gridSize
-                    };
-                },
+            const RegionManager = {
+                isDrawing: false, startX: 0, startY: 0, surfaceId: null, tempEl: null,
 
                 startDrawing(e) {
                     const wrapper = e.target.closest('.page-wrapper');
                     if (!wrapper) return;
-                    if (e.target.closest('.bullet-block') || e.target.closest('.draggable-image') || e.target.closest('button') || e.target.closest('#sticker-drawer') || e.target.closest('#page-indicator')) return;
+                    if (e.target.closest('.region-box') || e.target.closest('.draggable-image') || e.target.closest('button') || e.target.closest('#sticker-drawer') || e.target.closest('#page-indicator')) return;
                     
                     this.isDrawing = true;
-                    this.pageId = wrapper.dataset.pageId;
+                    this.surfaceId = wrapper.dataset.pageId;
+                    const rect = wrapper.getBoundingClientRect();
+                    this.startX = e.clientX - rect.left;
+                    this.startY = e.clientY - rect.top;
                     
-                    let svg = wrapper.querySelector('svg.drawing-layer');
-                    if (!svg) {
-                        svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-                        svg.setAttribute("class", "drawing-layer absolute inset-0 w-full h-full pointer-events-none layer-paper");
-                        wrapper.appendChild(svg);
-                    }
-                    this.svgLayer = svg;
-                    
-                    const pt = this.getGridSnap(e.clientX, e.clientY, wrapper);
-                    this.currentPoints = [{x: pt.x, y: pt.y}, {x: pt.x, y: pt.y}];
-                    
-                    this.currentPolyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-                    this.currentPolyline.setAttribute("fill", "none");
-                    this.currentPolyline.setAttribute("stroke", "#3f3f46");
-                    this.currentPolyline.setAttribute("stroke-width", "2.5");
-                    this.currentPolyline.setAttribute("stroke-linecap", "round");
-                    this.currentPolyline.setAttribute("stroke-linejoin", "round");
-                    this.updatePolyline();
-                    this.svgLayer.appendChild(this.currentPolyline);
-                },
-
-                updatePolyline() {
-                    if (!this.currentPolyline) return;
-                    this.currentPolyline.setAttribute("points", this.currentPoints.map(p => `${p.x},${p.y}`).join(" "));
+                    this.tempEl = document.createElement('div');
+                    this.tempEl.className = "absolute border border-zinc-400 bg-white/20 rounded-lg pointer-events-none layer-focus";
+                    this.tempEl.style.left = `${this.startX}px`;
+                    this.tempEl.style.top = `${this.startY}px`;
+                    this.tempEl.style.width = `0px`;
+                    this.tempEl.style.height = `0px`;
+                    wrapper.appendChild(this.tempEl);
                 },
 
                 draw(e) {
-                    if (!this.isDrawing || !this.currentPolyline) return;
-                    const wrapper = document.querySelector(`.page-wrapper[data-page-id="${this.pageId}"]`);
+                    if (!this.isDrawing || !this.tempEl) return;
+                    const wrapper = document.querySelector(`.page-wrapper[data-page-id="${this.surfaceId}"]`);
                     if (!wrapper) return;
                     
-                    const pt = this.getGridSnap(e.clientX, e.clientY, wrapper);
-                    this.currentPoints[1] = pt;
-                    this.updatePolyline();
+                    const rect = wrapper.getBoundingClientRect();
+                    const currentX = e.clientX - rect.left;
+                    const currentY = e.clientY - rect.top;
+                    
+                    const x = Math.min(this.startX, currentX);
+                    const y = Math.min(this.startY, currentY);
+                    const w = Math.abs(currentX - this.startX);
+                    const h = Math.abs(currentY - this.startY);
+                    
+                    this.tempEl.style.left = `${x}px`;
+                    this.tempEl.style.top = `${y}px`;
+                    this.tempEl.style.width = `${w}px`;
+                    this.tempEl.style.height = `${h}px`;
                 },
 
-                stopDrawing() {
+                stopDrawing(e) {
                     if (!this.isDrawing) return;
                     this.isDrawing = false;
-                    if (this.currentPoints[0].x === this.currentPoints[1].x && this.currentPoints[0].y === this.currentPoints[1].y) {
-                        this.currentPolyline.remove();
-                    } else {
-                        const p1 = { gx: this.currentPoints[0].x / this.gridSize, gy: this.currentPoints[0].y / this.gridSize };
-                        const p2 = { gx: this.currentPoints[1].x / this.gridSize, gy: this.currentPoints[1].y / this.gridSize };
-                        if (!State.meta.lines) State.meta.lines = [];
-                        State.meta.lines.push({ id: crypto.randomUUID(), pageId: this.pageId, p1, p2 });
-                        StorageManager.requestSave();
-                    }
-                    this.currentPolyline = null;
-                    this.currentPoints = [];
-                },
-
-                renderAll() {
-                    document.querySelectorAll('svg.drawing-layer').forEach(el => el.innerHTML = '');
-                    if (!State.meta.lines) return;
                     
-                    State.meta.lines.forEach(line => {
-                        const wrapper = document.querySelector(`.page-wrapper[data-page-id="${line.pageId}"]`);
-                        if (!wrapper) return;
+                    if (this.tempEl) {
+                        const w = parseInt(this.tempEl.style.width);
+                        const h = parseInt(this.tempEl.style.height);
+                        const x = parseInt(this.tempEl.style.left);
+                        const y = parseInt(this.tempEl.style.top);
                         
-                        let svg = wrapper.querySelector('svg.drawing-layer');
-                        if (!svg) {
-                            svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-                            svg.setAttribute("class", "drawing-layer absolute inset-0 w-full h-full pointer-events-none layer-paper");
-                            wrapper.appendChild(svg);
+                        this.tempEl.remove();
+                        this.tempEl = null;
+                        
+                        if (w > 50 && h > 50) {
+                            const regionId = crypto.randomUUID();
+                            const pageId = `page-${crypto.randomUUID()}`;
+                            const region = { id: regionId, surfaceId: this.surfaceId, x, y, width: w, height: h, pageId };
+                            
+                            State.meta.regions.push(region);
+                            State.regionPages[pageId] = [State.createBlock()];
+                            State.rebuildIndex();
+                            StorageManager.requestSave();
+                            Renderer.renderRegionBox(region);
+                            
+                            setTimeout(() => {
+                                const firstBlockId = State.regionPages[pageId][0].id;
+                                SelectionManager.focusBlock(firstBlockId, 0);
+                            }, 50);
                         }
-                        
-                        const rect = wrapper.getBoundingClientRect();
-                        const gridSize = rect.width / 26;
-                        
-                        const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-                        polyline.setAttribute("fill", "none");
-                        polyline.setAttribute("stroke", "#3f3f46");
-                        polyline.setAttribute("stroke-width", "2.5");
-                        polyline.setAttribute("stroke-linecap", "round");
-                        polyline.setAttribute("stroke-linejoin", "round");
-                        
-                        const px1 = line.p1.gx * gridSize;
-                        const py1 = line.p1.gy * gridSize;
-                        const px2 = line.p2.gx * gridSize;
-                        const py2 = line.p2.gy * gridSize;
-                        
-                        polyline.setAttribute("points", `${px1},${py1} ${px2},${py2}`);
-                        svg.appendChild(polyline);
-                    });
+                    }
                 }
             };
 
             // ==========================================
             // 🎨 RENDERER (DOM Layer)
             // ==========================================
+            const H_STYLES = { h1: "text-4xl font-bold mt-6 mb-2", h2: "text-3xl font-bold mt-5 mb-2", h3: "text-2xl font-bold mt-4 mb-1", h4: "text-xl font-semibold mt-3 mb-1", h5: "text-lg font-semibold mt-2 mb-1", h6: "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500" };
             const Renderer = {
                 renderApp() {
-                    if (State.pages.length % 2 !== 0) {
-                        State.meta.pageOrder.push(`page-${crypto.randomUUID()}`);
-                        State.pages.push([State.createBlock()]);
-                        State.rebuildIndex();
-                    }
-
-                    // Removed individual scroll containers. Pages expand naturally with dot-grid background!
                     document.getElementById("app").innerHTML = State.pages.map((p, i) => `
-                        <div class="page-wrapper dot-grid w-[50vw] min-h-screen flex-shrink-0 relative flex justify-center ${i % 2 === 0 ? "border-r border-dashed border-zinc-300" : ""}" data-page-id="${State.meta.pageOrder[i]}">
-                            <div class="w-full px-10 pt-24 pb-32 flex justify-center" data-idx="${i}">
-                                <div class="w-full max-w-md bujo-list relative min-h-[50vh]" data-idx="${i}"></div>
-                            </div>
+                        <div class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden" data-page-id="${State.meta.pageOrder[i]}">
                             <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">${i + 1}</div>
                         </div>`).join("");
 
-                    State.pages.forEach((_, i) => this.renderPage(i));
                     ImageManager.restoreAll();
-                    DrawingManager.renderAll();
+                    State.meta.regions.forEach(r => this.renderRegionBox(r));
                     this.updateViewport();
-
-                    // Removed block observers since images are now absolutely positioned
                 },
-                renderPage(pIdx) {
-                    const list = document.querySelector(`.bujo-list[data-idx="${pIdx}"]`);
-                    if (list) list.innerHTML = State.pages[pIdx].map(b => this.generateBlockHTML(b)).join("");
+                renderPage(pIdx) {},
+                renderRegionBox(r) {
+                    const wrapper = document.querySelector(`.page-wrapper[data-page-id="${r.surfaceId}"]`);
+                    if (!wrapper) return;
+                    
+                    let el = document.querySelector(`[data-region-id="${r.id}"]`);
+                    if (!el) {
+                        el = document.createElement('div');
+                        el.className = "region-box absolute bg-white/95 backdrop-blur-sm shadow-md border border-zinc-200/80 rounded-lg flex flex-col layer-paper";
+                        el.dataset.regionId = r.id;
+                        el.dataset.pageId = r.pageId;
+                        el.innerHTML = `
+                            <div class="region-header h-5 bg-zinc-50 border-b border-zinc-100 cursor-grab active:cursor-grabbing rounded-t-lg flex items-center px-2 hover:bg-zinc-100 transition-colors group">
+                                <div class="flex gap-1 opacity-20 group-hover:opacity-60 transition-opacity pointer-events-none">
+                                    <div class="w-1.5 h-1.5 rounded-full bg-zinc-600"></div>
+                                    <div class="w-1.5 h-1.5 rounded-full bg-zinc-600"></div>
+                                    <div class="w-1.5 h-1.5 rounded-full bg-zinc-600"></div>
+                                </div>
+                            </div>
+                            <div class="region-content flex-1 overflow-y-auto p-4 cursor-text" style="touch-action: pan-y;">
+                                <div class="bujo-list min-h-full" data-region-page-id="${r.pageId}"></div>
+                            </div>
+                            <div class="region-resizer absolute bottom-0 right-0 w-5 h-5 cursor-se-resize flex items-end justify-end p-1 opacity-0 hover:opacity-100 transition-opacity">
+                                <div class="w-2 h-2 border-r-2 border-b-2 border-zinc-400 rounded-sm pointer-events-none"></div>
+                            </div>
+                        `;
+                        wrapper.appendChild(el);
+                    }
+                    
+                    el.style.left = `${r.x}px`;
+                    el.style.top = `${r.y}px`;
+                    el.style.width = `${r.width}px`;
+                    el.style.height = `${r.height}px`;
+                    
+                    this.renderRegion(r.pageId);
+                },
+                renderRegion(pageId) {
+                    const list = document.querySelector(`.bujo-list[data-region-page-id="${pageId}"]`);
+                    if (list && State.regionPages[pageId]) {
+                        list.innerHTML = State.regionPages[pageId].map(b => this.generateBlockHTML(b)).join("");
+                    }
                 },
                 getBlockClasses(b) {
-                    const styles = { h1: "text-4xl font-bold mt-6 mb-2", h2: "text-3xl font-bold mt-5 mb-2", h3: "text-2xl font-bold mt-4 mb-1", h4: "text-xl font-semibold mt-3 mb-1", h5: "text-lg font-semibold mt-2 mb-1", h6: "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500" };
-                    return `flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ${styles[b.type] || "text-[1.05rem] leading-relaxed"} ${b.type === "completed" ? "line-through text-zinc-400 opacity-60" : ["migrated", "scheduled"].includes(b.type) ? "italic text-zinc-500" : ""}`;
+                    return `flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ${H_STYLES[b.type] || "text-[1.05rem] leading-relaxed"} ${b.type === "completed" ? "line-through text-zinc-400 opacity-60" : ["migrated", "scheduled"].includes(b.type) ? "italic text-zinc-500" : ""}`;
                 },
                 generateBlockHTML(b) {
                     const isB = CYCLE.includes(b.type);
@@ -585,12 +592,12 @@
                     if (textEl.textContent !== block.text) textEl.textContent = block.text;
                 },
                 updateViewport() {
-                    document.getElementById("app").style.transform = `translateX(-${State.currentP * 50}vw)`;
+                    document.getElementById("app").style.transform = `translateX(-${State.currentP * 100}vw)`;
                     this.renderIndicator();
                 },
                 renderIndicator() {
-                    const aP = Math.floor(State.currentP / 2);
-                    document.getElementById("page-indicator").innerHTML = Array.from({ length: Math.ceil(State.pages.length / 2) })
+                    const aP = State.currentP;
+                    document.getElementById("page-indicator").innerHTML = Array.from({ length: State.pages.length })
                         .map((_, i) => `<span onclick="EditorEngine.jumpToPair(${i})" class="pointer-events-none h-2 rounded-full transition-all duration-300 ${i === aP ? "w-6 bg-zinc-800" : "w-2 bg-zinc-300 hover:bg-zinc-400"}"></span>`).join("");
                 },
             };
@@ -629,11 +636,14 @@
                 splitBlock(id, caretPos) {
                     const c = State.getBlockCoords(id);
                     if (!c) return;
-                    const { pIdx, bIdx, block } = c;
+                    const { pIdx, pageId, isRegion, bIdx, block } = c;
                     const newType = block.type.startsWith("h") ? "text" : block.type;
                     const newBlock = State.createBlock(block.text.slice(caretPos), block.depth, newType);
                     block.text = block.text.slice(0, caretPos);
-                    State.pages[pIdx].splice(bIdx + 1, 0, newBlock);
+                    
+                    if (isRegion) State.regionPages[pageId].splice(bIdx + 1, 0, newBlock);
+                    else State.pages[pIdx].splice(bIdx + 1, 0, newBlock);
+                    
                     State.rebuildIndex();
                     Renderer.updateBlock(block);
                     document.querySelector(`[data-id="${block.id}"]`).insertAdjacentHTML("afterend", Renderer.generateBlockHTML(newBlock));
@@ -643,9 +653,13 @@
                 mergeWithPrevious(id) {
                     const c = State.getBlockCoords(id);
                     if (!c || c.bIdx === 0) return;
-                    const { pIdx, bIdx, block } = c, prev = State.pages[pIdx][bIdx - 1], pLen = prev.text.length;
+                    const { pIdx, pageId, isRegion, bIdx, block } = c;
+                    const pageArray = isRegion ? State.regionPages[pageId] : State.pages[pIdx];
+                    const prev = pageArray[bIdx - 1];
+                    const pLen = prev.text.length;
                     prev.text += block.text;
-                    State.pages[pIdx].splice(bIdx, 1);
+                    pageArray.splice(bIdx, 1);
+                    
                     State.rebuildIndex();
                     document.querySelector(`[data-id="${block.id}"]`)?.remove();
                     Renderer.updateBlock(prev);
@@ -657,7 +671,7 @@
                     if (target) SelectionManager.focusBlock(target.dataset.id, 0, dir === -1);
                 },
                 async changePage(dir) {
-                    const nextP = State.currentP + dir * 2;
+                    const nextP = State.currentP + dir;
                     if (nextP < 0) return;
                     State.currentP = nextP;
                     (await State.ensureEnoughPages()) ? Renderer.renderApp() : Renderer.updateViewport();
@@ -665,7 +679,7 @@
                     StorageManager.requestSave();
                 },
                 jumpToPair(idx) {
-                    State.currentP = idx * 2;
+                    State.currentP = idx;
                     Renderer.updateViewport();
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                     StorageManager.requestSave();
@@ -673,12 +687,21 @@
                 moveBlockDOM(id, targetId, insertAfter) {
                     const src = State.getBlockCoords(id), tgt = State.getBlockCoords(targetId);
                     if (!src || !tgt) return;
-                    const [moved] = State.pages[src.pIdx].splice(src.bIdx, 1);
-                    let iIdx = tgt.bIdx - (src.pIdx === tgt.pIdx && src.bIdx < tgt.bIdx ? 1 : 0) + (insertAfter ? 1 : 0);
-                    State.pages[tgt.pIdx].splice(iIdx, 0, moved);
+                    
+                    const srcArray = src.isRegion ? State.regionPages[src.pageId] : State.pages[src.pIdx];
+                    const tgtArray = tgt.isRegion ? State.regionPages[tgt.pageId] : State.pages[tgt.pIdx];
+                    
+                    const [moved] = srcArray.splice(src.bIdx, 1);
+                    const sameArray = (src.isRegion === tgt.isRegion) && (src.isRegion ? src.pageId === tgt.pageId : src.pIdx === tgt.pIdx);
+                    let iIdx = tgt.bIdx - (sameArray && src.bIdx < tgt.bIdx ? 1 : 0) + (insertAfter ? 1 : 0);
+                    
+                    tgtArray.splice(iIdx, 0, moved);
                     State.rebuildIndex();
-                    Renderer.renderPage(src.pIdx);
-                    if (src.pIdx !== tgt.pIdx) Renderer.renderPage(tgt.pIdx);
+                    
+                    if (src.isRegion) Renderer.renderRegion(src.pageId); else Renderer.renderPage(src.pIdx);
+                    if (!sameArray) {
+                        if (tgt.isRegion) Renderer.renderRegion(tgt.pageId); else Renderer.renderPage(tgt.pIdx);
+                    }
                     StorageManager.requestSave();
                 },
             };
@@ -689,6 +712,7 @@
             const EventController = {
                 imgDrag: { id: null, clickOffsetX: 0, clickOffsetY: 0, origPointerEvents: "", origZIndex: "", origTransition: "" },
                 draggedId: null,
+                regionDrag: { id: null, type: null, offsetX: 0, offsetY: 0, startX: 0, startY: 0, startW: 0, startH: 0 },
 
                 init() {
                     document.addEventListener("input", e => e.target.classList.contains("bullet-text") && EditorEngine.updateText(e.target.closest(".bullet-block").dataset.id, e.target.textContent, e.target.closest(".bullet-block")));
@@ -704,10 +728,13 @@
                     window.addEventListener("mousemove", this.handleImgMouseMove);
                     window.addEventListener("mouseup", this.handleImgMouseUp);
 
+                    document.addEventListener("mousedown", this.handleRegionMouseDown);
+                    window.addEventListener("mousemove", this.handleRegionMouseMove);
+                    window.addEventListener("mouseup", this.handleRegionMouseUp);
+
                     document.addEventListener("mousedown", this.handleGlobalMouseDown);
                     window.addEventListener("mousemove", this.handleGlobalMouseMove);
                     window.addEventListener("mouseup", this.handleGlobalMouseUp);
-                    window.addEventListener("resize", this.handleResize);
 
                     document.addEventListener("dragstart", this.handleDragStart);
                     document.addEventListener("dragover", this.handleDragOver);
@@ -746,8 +773,27 @@
                 handleContextMenu: (e) => {
                     const draggableImg = e.target.closest(".draggable-image");
                     const stickerItem = e.target.closest(".sticker-item");
+                    const regionHeader = e.target.closest(".region-header");
                     
-                    if (draggableImg) {
+                    if (regionHeader) {
+                        e.preventDefault();
+                        const regionBox = regionHeader.closest(".region-box");
+                        const id = regionBox.dataset.regionId;
+                        ContextMenu.show(e.clientX, e.clientY, [
+                            { label: "🗑️ Delete Region", danger: true, action: () => {
+                                const idx = State.meta.regions.findIndex(r => r.id === id);
+                                if (idx !== -1) {
+                                    const r = State.meta.regions[idx];
+                                    State.meta.regions.splice(idx, 1);
+                                    delete State.regionPages[r.pageId];
+                                    FileSystemAPI.trashJson(`pages/${r.pageId}.json`);
+                                    regionBox.remove();
+                                    State.rebuildIndex();
+                                    StorageManager.requestSave();
+                                }
+                            }}
+                        ]);
+                    } else if (draggableImg) {
                         e.preventDefault();
                         const id = draggableImg.dataset.imgId;
                         const imgData = State.meta.placedImages.find(i => i.id === id);
@@ -887,8 +933,7 @@
                 handleKeydown(e) {
                     const k = e.key, alt = e.altKey, ctrl = e.ctrlKey, shift = e.shiftKey;
                     if (!e.target.classList.contains("bullet-text")) {
-                        if (k === "ArrowLeft") { e.preventDefault(); EditorEngine.changePage(-1); }
-                        if (k === "ArrowRight") { e.preventDefault(); EditorEngine.changePage(1); }
+                        if (k === "ArrowLeft" || k === "ArrowRight") { e.preventDefault(); EditorEngine.changePage(k === "ArrowLeft" ? -1 : 1); }
                         return;
                     }
                     if (k === "Escape") return e.preventDefault(), e.target.blur();
@@ -922,17 +967,83 @@
                         document.addEventListener("mouseup", clean); handle.addEventListener("mouseleave", clean);
                     }
                 },
+                handleRegionMouseDown: (e) => {
+                    const resizer = e.target.closest('.region-resizer');
+                    if (resizer) {
+                        const regionBox = resizer.closest('.region-box');
+                        EventController.regionDrag = {
+                            id: regionBox.dataset.regionId, type: 'resize',
+                            startX: e.clientX, startY: e.clientY,
+                            startW: regionBox.offsetWidth, startH: regionBox.offsetHeight
+                        };
+                        e.preventDefault(); e.stopPropagation();
+                        return;
+                    }
+                    const header = e.target.closest('.region-header');
+                    if (header) {
+                        const regionBox = header.closest('.region-box');
+                        const rect = regionBox.getBoundingClientRect();
+                        EventController.regionDrag = {
+                            id: regionBox.dataset.regionId, type: 'move',
+                            offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top
+                        };
+                        e.preventDefault(); e.stopPropagation();
+                    }
+                },
+                handleRegionMouseMove: (e) => {
+                    const drag = EventController.regionDrag;
+                    if (!drag.id) return;
+                    const regionBox = document.querySelector(`.region-box[data-region-id="${drag.id}"]`);
+                    if (!regionBox) return;
+                    
+                    if (drag.type === 'move') {
+                        const wrapper = regionBox.closest('.page-wrapper');
+                        const wrapperRect = wrapper.getBoundingClientRect();
+                        regionBox.style.left = `${(e.clientX - drag.offsetX) - wrapperRect.left}px`;
+                        regionBox.style.top = `${(e.clientY - drag.offsetY) - wrapperRect.top}px`;
+                    } else if (drag.type === 'resize') {
+                        regionBox.style.width = `${Math.max(100, drag.startW + (e.clientX - drag.startX))}px`;
+                        regionBox.style.height = `${Math.max(100, drag.startH + (e.clientY - drag.startY))}px`;
+                    }
+                },
+                handleRegionMouseUp: (e) => {
+                    const drag = EventController.regionDrag;
+                    if (!drag.id) return;
+                    const regionBox = document.querySelector(`.region-box[data-region-id="${drag.id}"]`);
+                    const regionData = State.meta.regions.find(r => r.id === drag.id);
+                    if (regionBox && regionData) {
+                        if (drag.type === 'move') {
+                            const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
+                            const closestWrapper = wrappers.find(w => {
+                                const r = w.getBoundingClientRect();
+                                return e.clientX >= r.left && e.clientX <= r.right;
+                            }) || regionBox.closest('.page-wrapper');
+                            
+                            if (closestWrapper) {
+                                regionData.surfaceId = closestWrapper.dataset.pageId;
+                                if (regionBox.parentElement !== closestWrapper) closestWrapper.appendChild(regionBox);
+                                const wrapperRect = closestWrapper.getBoundingClientRect();
+                                regionData.x = (e.clientX - drag.offsetX) - wrapperRect.left;
+                                regionData.y = (e.clientY - drag.offsetY) - wrapperRect.top;
+                                regionBox.style.left = `${regionData.x}px`;
+                                regionBox.style.top = `${regionData.y}px`;
+                            }
+                        } else if (drag.type === 'resize') {
+                            regionData.width = regionBox.offsetWidth;
+                            regionData.height = regionBox.offsetHeight;
+                        }
+                        StorageManager.requestSave();
+                    }
+                    EventController.regionDrag = { id: null, type: null, offsetX: 0, offsetY: 0, startX: 0, startY: 0, startW: 0, startH: 0 };
+                },
                 handleGlobalMouseDown: (e) => {
-                    if (e.button === 0) DrawingManager.startDrawing(e);
+                    if (e.button === 0) RegionManager.startDrawing(e);
                 },
                 handleGlobalMouseMove: (e) => {
-                    DrawingManager.draw(e);
+                    RegionManager.draw(e);
                 },
                 handleGlobalMouseUp: (e) => {
-                    DrawingManager.stopDrawing();
-                },
-                handleResize: () => {
-                    DrawingManager.renderAll();
+                    RegionManager.stopDrawing(e);
                 },
                 handleDragStart(e) {
                     const block = e.target.closest(".bullet-block");
@@ -962,11 +1073,11 @@
                     const ind = document.getElementById("page-indicator");
                     let isScrubbing = false;
                     const scrub = (e) => {
-                        const r = ind.getBoundingClientRect(), pC = Math.ceil(State.pages.length / 2);
+                        const r = ind.getBoundingClientRect(), pC = State.pages.length;
                         if (pC <= 1) return;
                         const idx = Math.min(Math.floor((Math.max(0, Math.min(e.clientX - r.left, r.width)) / r.width) * pC), pC - 1);
-                        if (State.currentP !== idx * 2) {
-                            State.currentP = idx * 2;
+                        if (State.currentP !== idx) {
+                            State.currentP = idx;
                             Renderer.updateViewport();
                             window.scrollTo({ top: 0, behavior: 'smooth' });
                         }
