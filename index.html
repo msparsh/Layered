@@ -12,9 +12,9 @@
 
             /* 📓 Dot Grid Style */
             .dot-grid {
-                background-image: radial-gradient(#e4e4e7 1.5px, transparent 1.5px);
-                background-size: 24px 24px;
-                background-position: center top;
+                background-image: radial-gradient(circle at center, #d4d4d8 1.5px, transparent 1.5px);
+                background-size: calc(50vw / 26) calc(50vw / 26);
+                background-position: calc(-25vw / 26) calc(-25vw / 26);
             }
 
             .bullet-block { animation: slideIn 0.15s ease-out forwards; cursor: default; }
@@ -26,7 +26,7 @@
             .bullet-text { cursor: text; user-select: text; word-break: break-word; -webkit-hyphens: auto; hyphens: auto; }
 
             /* 📸 Draggable Image Styles */
-            .draggable-image { position: absolute; top: 0; left: 0; cursor: grab; max-width: 300px; filter: drop-shadow(0px 8px 12px rgba(0, 0, 0, 0.15)); user-select: none; transition: transform 0.2s ease, scale 0.2s ease, rotate 0.2s ease, opacity 0.2s ease; }
+            .draggable-image { position: absolute; top: 0; left: 0; cursor: grab; max-width: 300px; filter: drop-shadow(0px 8px 12px rgba(0, 0, 0, 0.15)); user-select: none; transition: scale 0.2s ease, rotate 0.2s ease, opacity 0.2s ease; }
             .draggable-image:active { cursor: grabbing; }
             .draggable-image[data-locked="true"] { cursor: default; }
             .draggable-image[data-locked="true"]:active { cursor: default; }
@@ -98,21 +98,15 @@
                                 img.pageId = m.pageOrder[Math.floor((m.currentP || 0) / 2) * 2] || m.pageOrder[0];
                             }
                             
-                            // Migrate legacy positioning to anchorBlockId & Translate3D
-                            if (img.anchorBlockId === undefined) {
-                                try {
-                                    const pageBlocks = await FileSystemAPI.readJson(`pages/${img.pageId}.json`);
-                                    if (pageBlocks && pageBlocks.length > 0) {
-                                        img.anchorBlockId = pageBlocks[0].id;
-                                    }
-                                } catch (e) {}
-                                if (!img.anchorBlockId) img.anchorBlockId = "migration-placeholder";
-                                
-                                img.offsetX = (img.left || 25) * 4; 
-                                img.offsetY = (img.top || 100) - 96;
-                                delete img.left;
-                                delete img.top;
+                            
+                            // Migrate legacy positioning to left/top
+                            if (img.left === undefined) {
+                                img.left = img.offsetX !== undefined ? img.offsetX : 100;
+                                img.top = img.offsetY !== undefined ? img.offsetY : 100;
                             }
+                            delete img.anchorBlockId;
+                            delete img.offsetX;
+                            delete img.offsetY;
                             if (img.zIndex !== undefined) {
                                 img.layerBucket = img.zIndex >= 40 ? 'floating' : (img.zIndex < 30 ? 'paper' : 'sticker');
                                 delete img.zIndex;
@@ -121,7 +115,7 @@
                         }));
                     }
 
-                    return { version: 3, currentP: 0, pageOrder: [], scrolls: [], stickers: [], placedImages: [], ...m };
+                    return { version: 3, currentP: 0, pageOrder: [], scrolls: [], stickers: [], placedImages: [], lines: [], ...m };
                 },
                 async executeSave(forceRender = false) {
                     if (this.isSaving) return (this.needsSave = true);
@@ -240,7 +234,7 @@
                     this.hide();
                     const menu = document.createElement("div");
                     menu.id = "custom-context-menu";
-                    menu.className = "fixed bg-white border border-zinc-200 shadow-xl rounded-md py-1 z-[100] min-w-max";
+                    menu.className = "fixed bg-white border border-zinc-200 shadow-xl rounded-md py-1 z-[100] w-48";
                     menu.style.left = `${x}px`;
                     menu.style.top = `${y}px`;
                     
@@ -332,48 +326,25 @@
                     const id = crypto.randomUUID();
                     await FileSystemAPI.writeJsonAtomic(`images/${id}.json`, { src });
 
-                    let anchorBlockId = null;
-                    let offsetX = 0;
-                    let offsetY = 0;
+                    let left = 100;
+                    let top = 100;
                     let pageId = State.meta.pageOrder[State.currentP];
 
                     if (clientX !== undefined && clientY !== undefined) {
-                        const blockEl = document.elementFromPoint(clientX, clientY)?.closest('.bullet-block');
-                        if (blockEl) {
-                            anchorBlockId = blockEl.dataset.id;
-                            const rect = blockEl.getBoundingClientRect();
-                            offsetX = clientX - rect.left - 50;
-                            offsetY = clientY - rect.top - 50;
-                            const wrapper = blockEl.closest('.page-wrapper');
-                            if (wrapper) pageId = wrapper.dataset.pageId;
-                        } else {
-                            const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
-                            const wrapper = wrappers.find(w => {
-                                const r = w.getBoundingClientRect();
-                                return clientX >= r.left && clientX <= r.right;
-                            }) || wrappers[0];
-                            if (wrapper) {
-                                pageId = wrapper.dataset.pageId;
-                                const blocks = Array.from(wrapper.querySelectorAll('.bullet-block'));
-                                if (blocks.length > 0) {
-                                    anchorBlockId = blocks[0].dataset.id;
-                                    const rect = blocks[0].getBoundingClientRect();
-                                    offsetX = clientX - rect.left - 50;
-                                    offsetY = clientY - rect.top - 50;
-                                }
-                            }
+                        const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
+                        const wrapper = wrappers.find(w => {
+                            const r = w.getBoundingClientRect();
+                            return clientX >= r.left && clientX <= r.right;
+                        }) || wrappers[0];
+                        if (wrapper) {
+                            pageId = wrapper.dataset.pageId;
+                            const wrapperRect = wrapper.getBoundingClientRect();
+                            left = clientX - wrapperRect.left - 50;
+                            top = clientY - wrapperRect.top - 50;
                         }
                     }
 
-                    if (!anchorBlockId) {
-                        const pIdx = State.currentP;
-                        const pageBlocks = State.pages[pIdx];
-                        if (pageBlocks && pageBlocks.length > 0) anchorBlockId = pageBlocks[0].id;
-                        offsetX = 50;
-                        offsetY = 50;
-                    }
-
-                    const imgData = { id, pageId, anchorBlockId, offsetX, offsetY, layerBucket: 'sticker' };
+                    const imgData = { id, pageId, left, top, layerBucket: 'sticker' };
                     State.meta.placedImages.push(imgData);
                     StorageManager.requestSave();
                     this.renderImage(imgData);
@@ -401,22 +372,9 @@
                 updateImagePositionDOM(data, imgEl) {
                     const img = imgEl || document.querySelector(`img[data-img-id="${data.id}"]`);
                     if (!img) return;
-                    
-                    const blockEl = document.querySelector(`[data-id="${data.anchorBlockId}"]`);
-                    const wrapper = img.closest('.page-wrapper');
-                    
-                    if (blockEl && wrapper) {
-                        const blockRect = blockEl.getBoundingClientRect();
-                        const wrapperRect = wrapper.getBoundingClientRect();
-                        const finalLeft = (blockRect.left - wrapperRect.left) + (data.offsetX || 0);
-                        const finalTop = (blockRect.top - wrapperRect.top) + (data.offsetY || 0);
-                        img.style.transform = `translate3d(${finalLeft}px, ${finalTop}px, 0)`;
-                    } else if (wrapper) {
-                        img.style.transform = `translate3d(${data.offsetX || 0}px, ${data.offsetY || 0}px, 0)`;
-                    }
-                },
-                updateImagePositions() {
-                    State.meta.placedImages.forEach(data => this.updateImagePositionDOM(data));
+                    img.style.left = `${data.left || 0}px`;
+                    img.style.top = `${data.top || 0}px`;
+                    img.style.transform = 'none';
                 },
                 updateImage(id, updates) {
                     const imgData = State.meta.placedImages.find(i => i.id === id);
@@ -433,7 +391,7 @@
                             if (updates.locked) img.dataset.locked = "true";
                             else delete img.dataset.locked;
                         }
-                        if (updates.offsetX !== undefined || updates.offsetY !== undefined || updates.anchorBlockId !== undefined) {
+                        if (updates.left !== undefined || updates.top !== undefined) {
                             this.updateImagePositionDOM(imgData, img);
                         }
                     }
@@ -452,6 +410,124 @@
                         FileSystemAPI.trashJson(`images/${id}.json`);
                     }
                 },
+            };
+
+            // ==========================================
+            // ✏️ DRAWING MANAGER (Dot Grid Lines)
+            // ==========================================
+            const DrawingManager = {
+                isDrawing: false,
+                currentPolyline: null,
+                currentPoints: [],
+                svgLayer: null,
+                gridSize: 0,
+                pageId: null,
+
+                getGridSnap(clientX, clientY, wrapper) {
+                    const rect = wrapper.getBoundingClientRect();
+                    this.gridSize = rect.width / 26;
+                    const x = clientX - rect.left;
+                    const y = clientY - rect.top;
+                    return {
+                        x: Math.round(x / this.gridSize) * this.gridSize,
+                        y: Math.round(y / this.gridSize) * this.gridSize
+                    };
+                },
+
+                startDrawing(e) {
+                    const wrapper = e.target.closest('.page-wrapper');
+                    if (!wrapper) return;
+                    if (e.target.closest('.bullet-block') || e.target.closest('.draggable-image') || e.target.closest('button') || e.target.closest('#sticker-drawer') || e.target.closest('#page-indicator')) return;
+                    
+                    this.isDrawing = true;
+                    this.pageId = wrapper.dataset.pageId;
+                    
+                    let svg = wrapper.querySelector('svg.drawing-layer');
+                    if (!svg) {
+                        svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+                        svg.setAttribute("class", "drawing-layer absolute inset-0 w-full h-full pointer-events-none layer-paper");
+                        wrapper.appendChild(svg);
+                    }
+                    this.svgLayer = svg;
+                    
+                    const pt = this.getGridSnap(e.clientX, e.clientY, wrapper);
+                    this.currentPoints = [{x: pt.x, y: pt.y}, {x: pt.x, y: pt.y}];
+                    
+                    this.currentPolyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+                    this.currentPolyline.setAttribute("fill", "none");
+                    this.currentPolyline.setAttribute("stroke", "#3f3f46");
+                    this.currentPolyline.setAttribute("stroke-width", "2.5");
+                    this.currentPolyline.setAttribute("stroke-linecap", "round");
+                    this.currentPolyline.setAttribute("stroke-linejoin", "round");
+                    this.updatePolyline();
+                    this.svgLayer.appendChild(this.currentPolyline);
+                },
+
+                updatePolyline() {
+                    if (!this.currentPolyline) return;
+                    this.currentPolyline.setAttribute("points", this.currentPoints.map(p => `${p.x},${p.y}`).join(" "));
+                },
+
+                draw(e) {
+                    if (!this.isDrawing || !this.currentPolyline) return;
+                    const wrapper = document.querySelector(`.page-wrapper[data-page-id="${this.pageId}"]`);
+                    if (!wrapper) return;
+                    
+                    const pt = this.getGridSnap(e.clientX, e.clientY, wrapper);
+                    this.currentPoints[1] = pt;
+                    this.updatePolyline();
+                },
+
+                stopDrawing() {
+                    if (!this.isDrawing) return;
+                    this.isDrawing = false;
+                    if (this.currentPoints[0].x === this.currentPoints[1].x && this.currentPoints[0].y === this.currentPoints[1].y) {
+                        this.currentPolyline.remove();
+                    } else {
+                        const p1 = { gx: this.currentPoints[0].x / this.gridSize, gy: this.currentPoints[0].y / this.gridSize };
+                        const p2 = { gx: this.currentPoints[1].x / this.gridSize, gy: this.currentPoints[1].y / this.gridSize };
+                        if (!State.meta.lines) State.meta.lines = [];
+                        State.meta.lines.push({ id: crypto.randomUUID(), pageId: this.pageId, p1, p2 });
+                        StorageManager.requestSave();
+                    }
+                    this.currentPolyline = null;
+                    this.currentPoints = [];
+                },
+
+                renderAll() {
+                    document.querySelectorAll('svg.drawing-layer').forEach(el => el.innerHTML = '');
+                    if (!State.meta.lines) return;
+                    
+                    State.meta.lines.forEach(line => {
+                        const wrapper = document.querySelector(`.page-wrapper[data-page-id="${line.pageId}"]`);
+                        if (!wrapper) return;
+                        
+                        let svg = wrapper.querySelector('svg.drawing-layer');
+                        if (!svg) {
+                            svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+                            svg.setAttribute("class", "drawing-layer absolute inset-0 w-full h-full pointer-events-none layer-paper");
+                            wrapper.appendChild(svg);
+                        }
+                        
+                        const rect = wrapper.getBoundingClientRect();
+                        const gridSize = rect.width / 26;
+                        
+                        const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+                        polyline.setAttribute("fill", "none");
+                        polyline.setAttribute("stroke", "#3f3f46");
+                        polyline.setAttribute("stroke-width", "2.5");
+                        polyline.setAttribute("stroke-linecap", "round");
+                        polyline.setAttribute("stroke-linejoin", "round");
+                        
+                        const px1 = line.p1.gx * gridSize;
+                        const py1 = line.p1.gy * gridSize;
+                        const px2 = line.p2.gx * gridSize;
+                        const py2 = line.p2.gy * gridSize;
+                        
+                        polyline.setAttribute("points", `${px1},${py1} ${px2},${py2}`);
+                        svg.appendChild(polyline);
+                    });
+                }
             };
 
             // ==========================================
@@ -476,17 +552,10 @@
 
                     State.pages.forEach((_, i) => this.renderPage(i));
                     ImageManager.restoreAll();
+                    DrawingManager.renderAll();
                     this.updateViewport();
 
-                    if (ImageManager.observer) ImageManager.observer.disconnect();
-                    else ImageManager.observer = new ResizeObserver(() => requestAnimationFrame(() => ImageManager.updateImagePositions()));
-                    if (ImageManager.mutObserver) ImageManager.mutObserver.disconnect();
-                    else ImageManager.mutObserver = new MutationObserver(() => requestAnimationFrame(() => ImageManager.updateImagePositions()));
-                    
-                    document.querySelectorAll('.bujo-list').forEach(list => {
-                        ImageManager.observer.observe(list);
-                        ImageManager.mutObserver.observe(list, { childList: true, subtree: true, characterData: true });
-                    });
+                    // Removed block observers since images are now absolutely positioned
                 },
                 renderPage(pIdx) {
                     const list = document.querySelector(`.bujo-list[data-idx="${pIdx}"]`);
@@ -635,6 +704,11 @@
                     window.addEventListener("mousemove", this.handleImgMouseMove);
                     window.addEventListener("mouseup", this.handleImgMouseUp);
 
+                    document.addEventListener("mousedown", this.handleGlobalMouseDown);
+                    window.addEventListener("mousemove", this.handleGlobalMouseMove);
+                    window.addEventListener("mouseup", this.handleGlobalMouseUp);
+                    window.addEventListener("resize", this.handleResize);
+
                     document.addEventListener("dragstart", this.handleDragStart);
                     document.addEventListener("dragover", this.handleDragOver);
                     document.addEventListener("dragend", this.handleDragEnd);
@@ -772,7 +846,9 @@
                             const wrapperRect = wrapper.getBoundingClientRect();
                             const finalLeft = (e.clientX - drag.clickOffsetX) - wrapperRect.left;
                             const finalTop = (e.clientY - drag.clickOffsetY) - wrapperRect.top;
-                            img.style.transform = `translate3d(${finalLeft}px, ${finalTop}px, 0)`;
+                            img.style.left = `${finalLeft}px`;
+                            img.style.top = `${finalTop}px`;
+                            img.style.transform = 'none';
                         }
                     }
                 },
@@ -788,36 +864,19 @@
                         img.style.zIndex = drag.origZIndex || "";
                         img.style.transition = drag.origTransition || "";
 
-                        const blockEl = document.elementFromPoint(e.clientX, e.clientY)?.closest('.bullet-block');
-                        if (blockEl) {
-                            imgData.anchorBlockId = blockEl.dataset.id;
-                            const blockRect = blockEl.getBoundingClientRect();
-                            imgData.offsetX = (e.clientX - drag.clickOffsetX) - blockRect.left;
-                            imgData.offsetY = (e.clientY - drag.clickOffsetY) - blockRect.top;
-
-                            const newWrapper = blockEl.closest('.page-wrapper');
-                            if (newWrapper) {
-                                imgData.pageId = newWrapper.dataset.pageId;
-                                if (img.parentElement !== newWrapper) newWrapper.appendChild(img);
-                            }
-                        } else {
-                            const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
-                            const closestWrapper = wrappers.find(w => {
-                                const r = w.getBoundingClientRect();
-                                return e.clientX >= r.left && e.clientX <= r.right;
-                            }) || img.closest('.page-wrapper');
+                        const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
+                        const closestWrapper = wrappers.find(w => {
+                            const r = w.getBoundingClientRect();
+                            return e.clientX >= r.left && e.clientX <= r.right;
+                        }) || img.closest('.page-wrapper');
+                        
+                        if (closestWrapper) {
+                            imgData.pageId = closestWrapper.dataset.pageId;
+                            if (img.parentElement !== closestWrapper) closestWrapper.appendChild(img);
                             
-                            if (closestWrapper) {
-                                imgData.pageId = closestWrapper.dataset.pageId;
-                                if (img.parentElement !== closestWrapper) closestWrapper.appendChild(img);
-                                
-                                const oldBlock = document.querySelector(`[data-id="${imgData.anchorBlockId}"]`);
-                                if (oldBlock) {
-                                    const blockRect = oldBlock.getBoundingClientRect();
-                                    imgData.offsetX = (e.clientX - drag.clickOffsetX) - blockRect.left;
-                                    imgData.offsetY = (e.clientY - drag.clickOffsetY) - blockRect.top;
-                                }
-                            }
+                            const wrapperRect = closestWrapper.getBoundingClientRect();
+                            imgData.left = (e.clientX - drag.clickOffsetX) - wrapperRect.left;
+                            imgData.top = (e.clientY - drag.clickOffsetY) - wrapperRect.top;
                         }
                         
                         StorageManager.requestSave();
@@ -862,6 +921,18 @@
                         const clean = () => { block.setAttribute("draggable", "false"); document.removeEventListener("mouseup", clean); handle.removeEventListener("mouseleave", clean); };
                         document.addEventListener("mouseup", clean); handle.addEventListener("mouseleave", clean);
                     }
+                },
+                handleGlobalMouseDown: (e) => {
+                    if (e.button === 0) DrawingManager.startDrawing(e);
+                },
+                handleGlobalMouseMove: (e) => {
+                    DrawingManager.draw(e);
+                },
+                handleGlobalMouseUp: (e) => {
+                    DrawingManager.stopDrawing();
+                },
+                handleResize: () => {
+                    DrawingManager.renderAll();
                 },
                 handleDragStart(e) {
                     const block = e.target.closest(".bullet-block");
