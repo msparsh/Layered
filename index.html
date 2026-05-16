@@ -1,629 +1,1163 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Minimalist Bujo - Spread 📖</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { overflow: hidden; background-color: #fafafa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        [contenteditable]:empty::before { content: "\FEFF"; }
-        .bullet-block { animation: slideIn 0.15s ease-out forwards; }
-        @keyframes slideIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-        ::-webkit-scrollbar { display: none; }
-        
-        .bullet-block { cursor: default; }
-        .bullet-handle { cursor: grab; user-select: none; }
-        .bullet-handle:active { cursor: grabbing; }
-        .dragging { opacity: 0.3; }
-        
-        .bullet-text { 
-            cursor: text; 
-            user-select: text; 
-            word-break: break-word; 
-            -webkit-hyphens: auto; 
-            hyphens: auto; 
-        }
-    </style>
-</head>
-<body class="text-zinc-800">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Minimalist Bujo - Spread 📖</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <style>
+            body {
+                overflow: hidden;
+                background-color: #fafafa;
+                font-family:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    sans-serif;
+            }
+            [contenteditable]:empty::before {
+                content: "\FEFF";
+            }
+            .bullet-block {
+                animation: slideIn 0.15s ease-out forwards;
+            }
+            @keyframes slideIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(-4px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+            ::-webkit-scrollbar {
+                display: none;
+            }
 
-    <div id="app" class="flex transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] w-full h-screen will-change-transform"></div>
-    <div id="page-indicator" class="fixed bottom-2 left-1/2 -translate-x-1/2 flex gap-3 z-50 p-4 cursor-grab active:cursor-grabbing touch-none"></div>
-    
-    <script>
-        // ==========================================
-        // 💾 PERSISTENCE LAYER
-        // ==========================================
-        const FileSystemAPI = {
-            async readJson(path) { return window.electronAPI ? await window.electronAPI.readJson(path) : null; },
-            async writeJsonAtomic(path, data) { if(window.electronAPI) await window.electronAPI.writeJsonAtomic(path, data); },
-            async trashJson(path) { if(window.electronAPI) await window.electronAPI.trashJson(path); }
-        };
+            .bullet-block {
+                cursor: default;
+            }
+            .bullet-handle {
+                cursor: grab;
+                user-select: none;
+            }
+            .bullet-handle:active {
+                cursor: grabbing;
+            }
+            .dragging {
+                opacity: 0.3;
+            }
 
-        const StorageManager = {
-            saveTimeout: null,
-            isSaving: false,
-            needsSave: false,
+            .bullet-text {
+                cursor: text;
+                user-select: text;
+                word-break: break-word;
+                -webkit-hyphens: auto;
+                hyphens: auto;
+            }
 
-            async loadNotebookMeta() {
-                const meta = await FileSystemAPI.readJson('meta.json');
-                if (meta) {
-                    if (meta.spreadOrder) {
-                        meta.pageOrder = meta.spreadOrder.map(id => id.replace('spread-', 'page-'));
-                        delete meta.spreadOrder;
+            /* 📸 Draggable Image Styles */
+            .draggable-image {
+                position: absolute;
+                cursor: grab;
+                max-width: 300px;
+                filter: drop-shadow(
+                    0px 8px 12px rgba(0, 0, 0, 0.15)
+                ); /* Fixed transparency! 👻 */
+                user-select: none;
+                z-index: 40;
+                transition: transform 0.2s ease; /* For the double-click pop effect */
+            }
+            .draggable-image:active {
+                cursor: grabbing;
+            }
+        </style>
+    </head>
+    <body class="text-zinc-800">
+        <button
+            id="sticker-toggle"
+            class="fixed top-6 right-6 w-12 h-12 bg-white rounded-full shadow-lg text-2xl z-[60] hover:scale-110 transition-transform flex items-center justify-center border border-zinc-100"
+        >
+            🎒
+        </button>
+
+        <div
+            id="sticker-drawer"
+            class="fixed top-0 right-0 w-80 h-screen bg-zinc-50 shadow-2xl z-[50] transform translate-x-full transition-transform duration-300 ease-out border-l border-zinc-200 p-6 overflow-y-auto"
+        >
+            <h2 class="text-2xl font-bold mb-2 mt-16 text-zinc-800">
+                Stickers 🌟
+            </h2>
+            <p class="text-xs text-zinc-500 mb-6 leading-relaxed">
+                Double-click any floating image on your page to save it here! Or
+                upload new ones directly 👇
+            </p>
+
+            <label
+                class="block w-full cursor-pointer bg-zinc-800 text-white hover:bg-zinc-700 text-center py-3 rounded-lg font-semibold text-sm mb-6 transition-colors shadow-md"
+            >
+                ➕ Upload Sticker
+                <input
+                    type="file"
+                    id="sticker-upload"
+                    accept="image/*"
+                    class="hidden"
+                />
+            </label>
+
+            <div id="sticker-grid" class="grid grid-cols-2 gap-4"></div>
+        </div>
+
+        <div
+            id="app"
+            class="flex transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] w-full h-screen will-change-transform relative"
+        ></div>
+        <div
+            id="page-indicator"
+            class="fixed bottom-2 left-1/2 -translate-x-1/2 flex gap-3 z-50 p-4 cursor-grab active:cursor-grabbing touch-none"
+        ></div>
+
+        <script>
+            // ==========================================
+            // 💾 PERSISTENCE LAYER
+            // ==========================================
+            const FileSystemAPI = {
+                async readJson(path) {
+                    return window.electronAPI
+                        ? await window.electronAPI.readJson(path)
+                        : null;
+                },
+                async writeJsonAtomic(path, data) {
+                    if (window.electronAPI)
+                        await window.electronAPI.writeJsonAtomic(path, data);
+                },
+                async trashJson(path) {
+                    if (window.electronAPI)
+                        await window.electronAPI.trashJson(path);
+                },
+            };
+
+            const StorageManager = {
+                saveTimeout: null,
+                isSaving: false,
+                needsSave: false,
+
+                async loadNotebookMeta() {
+                    const meta = await FileSystemAPI.readJson("meta.json");
+                    if (meta) {
+                        if (meta.spreadOrder) {
+                            meta.pageOrder = meta.spreadOrder.map((id) =>
+                                id.replace("spread-", "page-"),
+                            );
+                            delete meta.spreadOrder;
+                        }
+                        // Added stickers array & placedImages fallback! 🎒🖼️
+                        return {
+                            version: 2,
+                            currentP: 0,
+                            pageOrder: [],
+                            scrolls: [],
+                            stickers: [],
+                            placedImages: [], // New! Tracks placed images on the spread
+                            ...meta,
+                        };
                     }
-                    return { version: 2, currentP: 0, pageOrder: [], scrolls: [], ...meta };
-                }
-                return { version: 2, currentP: 0, pageOrder: [], scrolls: [] };
-            },
-            
-            async executeSave(forceRender = false) {
-                if (this.isSaving) {
-                    this.needsSave = true;
-                    return;
-                }
-                
-                this.isSaving = true;
-                this.needsSave = false;
+                    return {
+                        version: 2,
+                        currentP: 0,
+                        pageOrder: [],
+                        scrolls: [],
+                        stickers: [],
+                        placedImages: [], // New!
+                    };
+                },
 
-                try {
-                    const layoutChanged = await State.cleanEmptySpreads();
-                    const activePair = Math.floor(State.currentP / 2) * 2;
-                    
-                    if(State.meta.pageOrder[activePair]) await FileSystemAPI.writeJsonAtomic(`pages/${State.meta.pageOrder[activePair]}.json`, State.pages[activePair]);
-                    if(State.meta.pageOrder[activePair + 1]) await FileSystemAPI.writeJsonAtomic(`pages/${State.meta.pageOrder[activePair + 1]}.json`, State.pages[activePair + 1]);
-                    
-                    State.meta.currentP = State.currentP;
-                    await FileSystemAPI.writeJsonAtomic('meta.json', State.meta);
-                    
-                    if (layoutChanged || forceRender) Renderer.renderApp();
-                    else Renderer.renderIndicator(); 
-                } finally {
-                    this.isSaving = false;
-                    if (this.needsSave) this.executeSave(); // Process queued save
-                }
-            },
+                async executeSave(forceRender = false) {
+                    if (this.isSaving) {
+                        this.needsSave = true;
+                        return;
+                    }
+                    this.isSaving = true;
+                    this.needsSave = false;
 
-            requestSave(forceRender = false) {
-                clearTimeout(this.saveTimeout);
-                this.saveTimeout = setTimeout(() => this.executeSave(forceRender), 500);
-            }
-        };
+                    try {
+                        const layoutChanged = await State.cleanEmptySpreads();
+                        const activePair = Math.floor(State.currentP / 2) * 2;
 
-        // ==========================================
-        // 🧠 STATE MANAGEMENT (O(1) Lookups)
-        // ==========================================
-        const BULLETS = { task: '•', completed: '✕', migrated: '>', scheduled: '<', event: '○', note: '-' };
-        const CYCLE = ['task', 'completed', 'migrated', 'scheduled', 'event', 'note'];
-        const MD_MAP = {'* ': 'task', 'x ': 'completed', '> ': 'migrated', '< ': 'scheduled', 'o ': 'event', '- ': 'note', '# ': 'h1', '## ': 'h2', '### ': 'h3', '#### ': 'h4', '##### ': 'h5', '###### ': 'h6'};
+                        if (State.meta.pageOrder[activePair])
+                            await FileSystemAPI.writeJsonAtomic(
+                                `pages/${State.meta.pageOrder[activePair]}.json`,
+                                State.pages[activePair],
+                            );
+                        if (State.meta.pageOrder[activePair + 1])
+                            await FileSystemAPI.writeJsonAtomic(
+                                `pages/${State.meta.pageOrder[activePair + 1]}.json`,
+                                State.pages[activePair + 1],
+                            );
 
-        const State = {
-            meta: null,
-            pages: [],
-            currentP: 0,
-            blockMap: new Map(), // O(1) Index
+                        State.meta.currentP = State.currentP;
+                        await FileSystemAPI.writeJsonAtomic(
+                            "meta.json",
+                            State.meta,
+                        );
 
-            createBlock(text = '', depth = 0, type = 'text') { 
-                return { id: crypto.randomUUID(), type, text, depth }; 
-            },
+                        if (layoutChanged || forceRender) Renderer.renderApp();
+                        else Renderer.renderIndicator();
+                    } finally {
+                        this.isSaving = false;
+                        if (this.needsSave) this.executeSave();
+                    }
+                },
 
-            async init() {
-                this.meta = await StorageManager.loadNotebookMeta();
-                if (this.meta.pageOrder.length === 0) {
-                    this.meta.pageOrder.push(`page-${crypto.randomUUID()}`, `page-${crypto.randomUUID()}`);
-                    await FileSystemAPI.writeJsonAtomic('meta.json', this.meta);
-                }
-                this.pages = await Promise.all(this.meta.pageOrder.map(id => 
-                    FileSystemAPI.readJson(`pages/${id}.json`).then(d => d || [this.createBlock()])
-                ));
-                this.currentP = this.meta.currentP || 0;
-                this.rebuildIndex();
-            },
+                requestSave(forceRender = false) {
+                    clearTimeout(this.saveTimeout);
+                    this.saveTimeout = setTimeout(
+                        () => this.executeSave(forceRender),
+                        500,
+                    );
+                },
+            };
 
-            rebuildIndex() {
-                this.blockMap.clear();
-                this.pages.forEach((page, pIdx) => {
-                    page.forEach((block, bIdx) => {
-                        this.blockMap.set(block.id, { pIdx, bIdx, block });
-                    });
-                });
-            },
+            // ==========================================
+            // 🧠 STATE MANAGEMENT (O(1) Lookups)
+            // ==========================================
+            const BULLETS = {
+                task: "•",
+                completed: "✕",
+                migrated: ">",
+                scheduled: "<",
+                event: "○",
+                note: "-",
+            };
+            const CYCLE = [
+                "task",
+                "completed",
+                "migrated",
+                "scheduled",
+                "event",
+                "note",
+            ];
+            const MD_MAP = {
+                "* ": "task",
+                "x ": "completed",
+                "> ": "migrated",
+                "< ": "scheduled",
+                "o ": "event",
+                "- ": "note",
+                "# ": "h1",
+                "## ": "h2",
+                "### ": "h3",
+                "#### ": "h4",
+                "##### ": "h5",
+                "###### ": "h6",
+            };
 
-            getBlockCoords(blockId) {
-                return this.blockMap.get(blockId) || null; // O(1) lookup
-            },
+            const State = {
+                meta: null,
+                pages: [],
+                currentP: 0,
+                blockMap: new Map(),
 
-            async cleanEmptySpreads() {
-                let layoutChanged = false;
-                while (this.pages.length > 2) {
-                    const i = this.pages.length - 2;
-                    if (Math.floor(i / 2) === Math.floor(this.currentP / 2)) break;
+                createBlock(text = "", depth = 0, type = "text") {
+                    return { id: crypto.randomUUID(), type, text, depth };
+                },
 
-                    const p1Empty = this.pages[i].every(b => b.text.trim() === '' && b.type === 'text');
-                    const p2Empty = (this.pages[i+1] || []).every(b => b.text.trim() === '' && b.type === 'text');
+                async init() {
+                    this.meta = await StorageManager.loadNotebookMeta();
+                    if (!this.meta.stickers) this.meta.stickers = []; // Safety check 🛡️
 
-                    if (p1Empty && p2Empty) {
-                        await FileSystemAPI.trashJson(`pages/${this.meta.pageOrder[i]}.json`);
-                        await FileSystemAPI.trashJson(`pages/${this.meta.pageOrder[i+1]}.json`);
-                        this.pages.splice(i, 2); this.meta.pageOrder.splice(i, 2); this.meta.scrolls.splice(i, 2);
-                        layoutChanged = true;
-                    } else break;
-                }
-                if (this.currentP >= this.pages.length) { 
-                    this.currentP = Math.max(0, this.pages.length - 2); 
-                    layoutChanged = true; 
-                }
-                if (layoutChanged) this.rebuildIndex();
-                return layoutChanged;
-            },
-            
-            async ensureEnoughPages() {
-                if (this.currentP >= this.pages.length) {
-                    this.meta.pageOrder.push(`page-${crypto.randomUUID()}`, `page-${crypto.randomUUID()}`);
-                    this.pages.push([this.createBlock()], [this.createBlock()]);
+                    if (this.meta.pageOrder.length === 0) {
+                        this.meta.pageOrder.push(
+                            `page-${crypto.randomUUID()}`,
+                            `page-${crypto.randomUUID()}`,
+                        );
+                        await FileSystemAPI.writeJsonAtomic(
+                            "meta.json",
+                            this.meta,
+                        );
+                    }
+                    this.pages = await Promise.all(
+                        this.meta.pageOrder.map((id) =>
+                            FileSystemAPI.readJson(`pages/${id}.json`).then(
+                                (d) => d || [this.createBlock()],
+                            ),
+                        ),
+                    );
+                    this.currentP = this.meta.currentP || 0;
                     this.rebuildIndex();
-                    await FileSystemAPI.writeJsonAtomic('meta.json', this.meta);
-                    return true;
-                }
-                return false;
-            }
-        };
+                },
 
-        // ==========================================
-        // 🎯 SELECTION & CARET MANAGEMENT
-        // ==========================================
-        const SelectionManager = {
-            getCaretPos(el) { 
-                const sel = window.getSelection();
-                if (sel.rangeCount) {
-                    const r = sel.getRangeAt(0).cloneRange();
-                    r.selectNodeContents(el);
-                    r.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset);
-                    return r.toString().length;
-                }
-                return 0;
-            },
+                rebuildIndex() {
+                    this.blockMap.clear();
+                    this.pages.forEach((page, pIdx) => {
+                        page.forEach((block, bIdx) =>
+                            this.blockMap.set(block.id, { pIdx, bIdx, block }),
+                        );
+                    });
+                },
 
-            focusBlock(id, offset = 0, atEnd = false) {
-                const el = document.querySelector(`[data-id="${id}"] .bullet-text`);
-                if (!el) return;
-                
-                el.focus();
-                const sel = window.getSelection();
-                const range = document.createRange();
-                
-                if (atEnd) {
-                    range.selectNodeContents(el);
-                    range.collapse(false);
-                } else if (el.firstChild && el.firstChild.nodeType === Node.TEXT_NODE) {
-                    const safeOffset = Math.min(offset, el.firstChild.length);
-                    range.setStart(el.firstChild, safeOffset);
-                    range.collapse(true);
-                } else {
-                    range.setStart(el, 0);
-                    range.collapse(true);
-                }
-                sel.removeAllRanges(); 
-                sel.addRange(range);
-            }
-        };
+                getBlockCoords(blockId) {
+                    return this.blockMap.get(blockId) || null;
+                },
 
-        // ==========================================
-        // 🎨 RENDERER (DOM Layer)
-        // ==========================================
-        const Renderer = {
-            renderApp() {
-                if (State.pages.length % 2 !== 0) {
-                    State.meta.pageOrder.push(`page-${crypto.randomUUID()}`);
-                    State.pages.push([State.createBlock()]);
-                    State.rebuildIndex();
-                }
+                async cleanEmptySpreads() {
+                    let layoutChanged = false;
+                    while (this.pages.length > 2) {
+                        const i = this.pages.length - 2;
+                        if (Math.floor(i / 2) === Math.floor(this.currentP / 2))
+                            break;
 
-                document.getElementById('app').innerHTML = State.pages.map((p, i) => `
-                    <div class="w-[50vw] h-screen flex-shrink-0 relative flex justify-center ${i % 2 === 0 ? 'border-r border-dashed border-zinc-300' : ''}">
+                        const p1Empty = this.pages[i].every(
+                            (b) => b.text.trim() === "" && b.type === "text",
+                        );
+                        const p2Empty = (this.pages[i + 1] || []).every(
+                            (b) => b.text.trim() === "" && b.type === "text",
+                        );
+
+                        if (p1Empty && p2Empty) {
+                            await FileSystemAPI.trashJson(
+                                `pages/${this.meta.pageOrder[i]}.json`,
+                            );
+                            await FileSystemAPI.trashJson(
+                                `pages/${this.meta.pageOrder[i + 1]}.json`,
+                            );
+                            this.pages.splice(i, 2);
+                            this.meta.pageOrder.splice(i, 2);
+                            this.meta.scrolls.splice(i, 2);
+                            layoutChanged = true;
+                        } else break;
+                    }
+                    if (this.currentP >= this.pages.length) {
+                        this.currentP = Math.max(0, this.pages.length - 2);
+                        layoutChanged = true;
+                    }
+                    if (layoutChanged) this.rebuildIndex();
+                    return layoutChanged;
+                },
+
+                async ensureEnoughPages() {
+                    if (this.currentP >= this.pages.length) {
+                        this.meta.pageOrder.push(
+                            `page-${crypto.randomUUID()}`,
+                            `page-${crypto.randomUUID()}`,
+                        );
+                        this.pages.push(
+                            [this.createBlock()],
+                            [this.createBlock()],
+                        );
+                        this.rebuildIndex();
+                        await FileSystemAPI.writeJsonAtomic(
+                            "meta.json",
+                            this.meta,
+                        );
+                        return true;
+                    }
+                    return false;
+                },
+            };
+
+            // ==========================================
+            // 🎯 SELECTION & CARET MANAGEMENT
+            // ==========================================
+            const SelectionManager = {
+                getCaretPos(el) {
+                    const sel = window.getSelection();
+                    if (sel.rangeCount) {
+                        const r = sel.getRangeAt(0).cloneRange();
+                        r.selectNodeContents(el);
+                        r.setEnd(
+                            sel.getRangeAt(0).endContainer,
+                            sel.getRangeAt(0).endOffset,
+                        );
+                        return r.toString().length;
+                    }
+                    return 0;
+                },
+                focusBlock(id, offset = 0, atEnd = false) {
+                    const el = document.querySelector(
+                        `[data-id="${id}"] .bullet-text`,
+                    );
+                    if (!el) return;
+                    el.focus();
+                    const sel = window.getSelection();
+                    const range = document.createRange();
+                    if (atEnd) {
+                        range.selectNodeContents(el);
+                        range.collapse(false);
+                    } else if (
+                        el.firstChild &&
+                        el.firstChild.nodeType === Node.TEXT_NODE
+                    ) {
+                        const safeOffset = Math.min(
+                            offset,
+                            el.firstChild.length,
+                        );
+                        range.setStart(el.firstChild, safeOffset);
+                        range.collapse(true);
+                    } else {
+                        range.setStart(el, 0);
+                        range.collapse(true);
+                    }
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                },
+            };
+
+            // ==========================================
+            // 🎒 STICKER BOOK (New UI Logic)
+            // ==========================================
+            const StickerBook = {
+                isOpen: false,
+
+                init() {
+                    const drawer = document.getElementById("sticker-drawer");
+                    const btn = document.getElementById("sticker-toggle");
+
+                    // Toggle Drawer visibility
+                    btn.addEventListener("click", () => {
+                        this.isOpen = !this.isOpen;
+                        if (this.isOpen)
+                            drawer.classList.remove("translate-x-full");
+                        else drawer.classList.add("translate-x-full");
+                    });
+
+                    // Handle manual file uploads
+                    document
+                        .getElementById("sticker-upload")
+                        .addEventListener("change", (e) => {
+                            const file = e.target.files[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = (event) => {
+                                this.saveSticker(event.target.result);
+                            };
+                            reader.readAsDataURL(file); // Convert directly to Base64!
+                        });
+
+                    this.render();
+                },
+
+                saveSticker(base64Src) {
+                    // Prevent duplicates 🛑
+                    if (!State.meta.stickers.includes(base64Src)) {
+                        State.meta.stickers.push(base64Src);
+                        StorageManager.requestSave();
+                        this.render();
+                    }
+                },
+
+                render() {
+                    const grid = document.getElementById("sticker-grid");
+                    if (State.meta.stickers.length === 0) {
+                        grid.innerHTML = `<div class="col-span-2 text-center text-sm text-zinc-400 mt-4">No stickers saved yet! 😿</div>`;
+                        return;
+                    }
+
+                    // Render out the saved images into the grid
+                    grid.innerHTML = State.meta.stickers
+                        .map(
+                            (b64) => `
+                    <div class="cursor-pointer group flex items-center justify-center p-2 bg-white rounded-lg shadow-sm border border-zinc-100 hover:shadow-md hover:-translate-y-1 transition-all" onclick="ImageManager.spawn('${b64}')">
+                        <img src="${b64}" class="max-w-full max-h-24 object-contain filter drop-shadow-sm group-hover:drop-shadow-md">
+                    </div>
+                `,
+                        )
+                        .join("");
+                },
+            };
+
+            // ==========================================
+            // 🖼️ IMAGE MANAGER (In-Memory Layer)
+            // ==========================================
+            // ==========================================
+            // 🖼️ IMAGE MANAGER (Persistence Layer)
+            // ==========================================
+            const ImageManager = {
+                spawn(src) {
+                    const vw = window.innerWidth;
+                    const offsetLeft =
+                        (State.currentP * vw) / 2 + Math.random() * 100 + 50;
+
+                    const imgData = {
+                        id: crypto.randomUUID(),
+                        src,
+                        left: offsetLeft,
+                        top: 100 + Math.random() * 50,
+                    };
+
+                    // Save to persistent state! 💾
+                    State.meta.placedImages.push(imgData);
+                    this.renderImage(imgData);
+                    StorageManager.requestSave(); // Trigger disk save
+                },
+
+                renderImage(data) {
+                    const img = document.createElement("img");
+                    img.src = data.src;
+                    img.className = "draggable-image";
+                    img.dataset.imgId = data.id;
+                    img.style.left = `${data.left}px`;
+                    img.style.top = `${data.top}px`;
+                    document.getElementById("app").appendChild(img);
+                },
+
+                restoreAll() {
+                    // Clear existing floating images to prevent duplicates on layout re-renders 🗑️
+                    document
+                        .querySelectorAll(".draggable-image")
+                        .forEach((el) => el.remove());
+                    // Render from saved state 🎨
+                    State.meta.placedImages.forEach((data) =>
+                        this.renderImage(data),
+                    );
+                },
+            };
+
+            // ==========================================
+            // 🎨 RENDERER (DOM Layer)
+            // ==========================================
+            const Renderer = {
+                renderApp() {
+                    if (State.pages.length % 2 !== 0) {
+                        State.meta.pageOrder.push(
+                            `page-${crypto.randomUUID()}`,
+                        );
+                        State.pages.push([State.createBlock()]);
+                        State.rebuildIndex();
+                    }
+
+                    document.getElementById("app").innerHTML = State.pages
+                        .map(
+                            (p, i) => `
+                    <div class="w-[50vw] h-screen flex-shrink-0 relative flex justify-center ${i % 2 === 0 ? "border-r border-dashed border-zinc-300" : ""}">
                         <div class="w-full h-full overflow-y-auto px-10 pt-24 pb-32 flex justify-center scroll-container" data-idx="${i}">
                             <div class="w-full max-w-md bujo-list relative min-h-[50vh]" data-idx="${i}"></div>
                         </div>
                         <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">${i + 1}</div>
                     </div>
-                `).join('');
-                
-                State.pages.forEach((_, i) => {
-                    this.renderPage(i);
-                    const container = document.querySelector(`.scroll-container[data-idx="${i}"]`);
-                    if (container && State.meta.scrolls[i]) container.scrollTop = State.meta.scrolls[i];
-                    
-                    container.addEventListener('scroll', (e) => {
-                        State.meta.scrolls[i] = e.target.scrollTop;
-                        StorageManager.requestSave();
+                `,
+                        )
+                        .join("");
+
+                    State.pages.forEach((_, i) => {
+                        this.renderPage(i);
+                        const container = document.querySelector(
+                            `.scroll-container[data-idx="${i}"]`,
+                        );
+                        if (container && State.meta.scrolls[i])
+                            container.scrollTop = State.meta.scrolls[i];
+
+                        container.addEventListener("scroll", (e) => {
+                            State.meta.scrolls[i] = e.target.scrollTop;
+                            StorageManager.requestSave();
+                        });
                     });
-                });
-                this.updateViewport();
-            },
 
-            renderPage(pIdx) {
-                const list = document.querySelector(`.bujo-list[data-idx="${pIdx}"]`);
-                if(!list) return;
-                list.innerHTML = State.pages[pIdx].map(b => this.generateBlockHTML(b)).join('');
-            },
+                    ImageManager.restoreAll();
+                    this.updateViewport();
+                },
 
-            generateBlockHTML(b) {
-                let textClass = this.getBlockClasses(b);
-                const isBullet = CYCLE.includes(b.type);
-                const symbol = isBullet ? BULLETS[b.type] : ''; 
+                renderPage(pIdx) {
+                    const list = document.querySelector(
+                        `.bujo-list[data-idx="${pIdx}"]`,
+                    );
+                    if (!list) return;
+                    list.innerHTML = State.pages[pIdx]
+                        .map((b) => this.generateBlockHTML(b))
+                        .join("");
+                },
 
-                return `
+                generateBlockHTML(b) {
+                    let textClass = this.getBlockClasses(b);
+                    const isBullet = CYCLE.includes(b.type);
+                    const symbol = isBullet ? BULLETS[b.type] : "";
+
+                    return `
                 <div class="relative flex items-start mb-2 bullet-block group" data-id="${b.id}" style="margin-left: ${b.depth * 28}px">
-                    <div class="absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isBullet ? 'opacity-40 text-zinc-500' : 'opacity-0 text-zinc-300'} group-hover:opacity-100 hover:!text-black font-bold transition-all" draggable="false">
-                        ${symbol || '::'} 
+                    <div class="absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isBullet ? "opacity-40 text-zinc-500" : "opacity-0 text-zinc-300"} group-hover:opacity-100 hover:!text-black font-bold transition-all" draggable="false">
+                        ${symbol || "::"}
                     </div>
                     <div class="${textClass}" contenteditable="true" spellcheck="false">${b.text}</div>
                 </div>`;
-            },
+                },
 
-            getBlockClasses(b) {
-                let cls = "flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ";
-                const styles = { 'h1': "text-4xl font-bold mt-6 mb-2 ", 'h2': "text-3xl font-bold mt-5 mb-2 ", 'h3': "text-2xl font-bold mt-4 mb-1 ", 'h4': "text-xl font-semibold mt-3 mb-1 ", 'h5': "text-lg font-semibold mt-2 mb-1 ", 'h6': "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500 " };
-                cls += styles[b.type] || "text-[1.05rem] leading-relaxed ";
-                if (b.type === 'completed') cls += "line-through text-zinc-400 opacity-60";
-                else if (['migrated', 'scheduled'].includes(b.type)) cls += "italic text-zinc-500";
-                return cls;
-            },
-
-            updateBlock(block, el) {
-                const blockEl = el || document.querySelector(`[data-id="${block.id}"]`);
-                if (!blockEl) return;
-
-                blockEl.style.marginLeft = `${block.depth * 28}px`;
-                const isBullet = CYCLE.includes(block.type);
-                const handleEl = blockEl.querySelector('.bullet-handle');
-                handleEl.className = `absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isBullet ? 'opacity-40 text-zinc-500' : 'opacity-0 text-zinc-300'} group-hover:opacity-100 hover:!text-black font-bold transition-all`;
-                handleEl.innerHTML = isBullet ? BULLETS[block.type] : '::';
-
-                const textEl = blockEl.querySelector('.bullet-text');
-                textEl.className = this.getBlockClasses(block);
-                if (textEl.textContent !== block.text) textEl.textContent = block.text;
-            },
-
-            insertBlockAfter(pIdx, refBlockId, newBlock) {
-                const list = document.querySelector(`.bujo-list[data-idx="${pIdx}"]`);
-                const refEl = list.querySelector(`[data-id="${refBlockId}"]`);
-                refEl.insertAdjacentHTML('afterend', this.generateBlockHTML(newBlock));
-            },
-
-            removeBlock(blockId) {
-                const blockEl = document.querySelector(`[data-id="${blockId}"]`);
-                if (blockEl) blockEl.remove();
-            },
-
-            updateViewport() {
-                document.getElementById('app').style.transform = `translateX(-${State.currentP * 50}vw)`;
-                this.renderIndicator();
-            },
-
-            renderIndicator() {
-                const activePair = Math.floor(State.currentP / 2);
-                document.getElementById('page-indicator').innerHTML = Array.from({length: Math.ceil(State.pages.length / 2)}).map((_, i) => 
-                    `<span onclick="EditorEngine.jumpToPair(${i})" class="pointer-events-none h-2 rounded-full transition-all duration-300 ${i === activePair ? 'w-6 bg-zinc-800' : 'w-2 bg-zinc-300 hover:bg-zinc-400'}"></span>`
-                ).join('');
-            }
-        };
-
-        // ==========================================
-        // 🛠️ EDITOR ENGINE (Commands & Mutations)
-        // ==========================================
-        const EditorEngine = {
-            updateText(blockId, newText, blockEl) {
-                const coords = State.getBlockCoords(blockId);
-                if (!coords) return;
-                const { block } = coords;
-                block.text = newText;
-
-                for (const [prefix, type] of Object.entries(MD_MAP)) {
-                    if (block.text.startsWith(prefix)) {
-                        block.type = type;
-                        block.text = block.text.substring(prefix.length);
-                        Renderer.updateBlock(block, blockEl);
-                        SelectionManager.focusBlock(block.id, 0);
-                        break;
-                    }
-                }
-                StorageManager.requestSave();
-            },
-
-            indentBlock(blockId, direction) {
-                const coords = State.getBlockCoords(blockId);
-                if (!coords) return;
-                coords.block.depth = Math.max(0, Math.min(4, coords.block.depth + direction));
-                Renderer.updateBlock(coords.block);
-                StorageManager.requestSave();
-            },
-
-            setBlockType(blockId, newType) {
-                const coords = State.getBlockCoords(blockId);
-                if (!coords) return;
-                coords.block.type = newType;
-                Renderer.updateBlock(coords.block);
-                StorageManager.requestSave();
-            },
-
-            cycleType(blockId) {
-                const coords = State.getBlockCoords(blockId);
-                if (!coords) return;
-                let currentIndex = CYCLE.indexOf(coords.block.type);
-                this.setBlockType(blockId, currentIndex === -1 ? 'task' : CYCLE[(currentIndex + 1) % CYCLE.length]);
-            },
-
-            splitBlock(blockId, caretPos) {
-                const coords = State.getBlockCoords(blockId);
-                if (!coords) return;
-                const { pIdx, bIdx, block } = coords;
-                
-                const txt = block.text;
-                block.text = txt.slice(0, caretPos);
-                
-                const newType = block.type.startsWith('h') ? 'text' : block.type;
-                const newBlock = State.createBlock(txt.slice(caretPos), block.depth, newType);
-                
-                State.pages[pIdx].splice(bIdx + 1, 0, newBlock);
-                State.rebuildIndex(); // Re-index after array splice
-                
-                Renderer.updateBlock(block);
-                Renderer.insertBlockAfter(pIdx, block.id, newBlock);
-                
-                SelectionManager.focusBlock(newBlock.id, 0);
-                StorageManager.requestSave();
-            },
-
-            mergeWithPrevious(blockId) {
-                const coords = State.getBlockCoords(blockId);
-                if (!coords || coords.bIdx === 0) return;
-                
-                const { pIdx, bIdx, block } = coords;
-                const prevBlock = State.pages[pIdx][bIdx - 1];
-                
-                const prevLength = prevBlock.text.length;
-                prevBlock.text += block.text;
-                
-                State.pages[pIdx].splice(bIdx, 1);
-                State.rebuildIndex(); // Re-index
-                
-                Renderer.removeBlock(block.id);
-                Renderer.updateBlock(prevBlock);
-                
-                SelectionManager.focusBlock(prevBlock.id, prevLength);
-                StorageManager.requestSave();
-            },
-
-            navigateVertical(blockId, direction) {
-                const el = document.querySelector(`[data-id="${blockId}"]`);
-                if (!el) return;
-                const target = direction === -1 ? el.previousElementSibling : el.nextElementSibling;
-                if (target) SelectionManager.focusBlock(target.dataset.id, 0, direction === -1);
-            },
-
-            async changePage(dir) {
-                const nextP = State.currentP + dir * 2;
-                if (nextP < 0) return;
-                State.currentP = nextP; 
-                if (await State.ensureEnoughPages()) Renderer.renderApp();
-                else Renderer.updateViewport();
-                StorageManager.requestSave();
-            },
-
-            jumpToPair(pairIdx) { 
-                State.currentP = pairIdx * 2; 
-                Renderer.updateViewport(); 
-                StorageManager.requestSave(); 
-            },
-
-            moveBlockDOM(blockId, targetId, insertAfter) {
-                const sourceCoords = State.getBlockCoords(blockId);
-                const targetCoords = State.getBlockCoords(targetId);
-                if (!sourceCoords || !targetCoords) return;
-
-                const [movedBlock] = State.pages[sourceCoords.pIdx].splice(sourceCoords.bIdx, 1);
-                
-                let insertIndex = targetCoords.bIdx;
-                if (sourceCoords.pIdx === targetCoords.pIdx && sourceCoords.bIdx < targetCoords.bIdx) insertIndex -= 1; 
-                if (insertAfter) insertIndex += 1;
-
-                State.pages[targetCoords.pIdx].splice(insertIndex, 0, movedBlock);
-                State.rebuildIndex(); // Re-index
-
-                Renderer.renderPage(sourceCoords.pIdx);
-                if (sourceCoords.pIdx !== targetCoords.pIdx) Renderer.renderPage(targetCoords.pIdx);
-                StorageManager.requestSave();
-            }
-        };
-
-        // ==========================================
-        // ⌨️ EVENT CONTROLLER (Routing)
-        // ==========================================
-        const EventController = {
-            init() {
-                document.addEventListener('input', this.handleInput);
-                document.addEventListener('keydown', this.handleKeydown);
-                document.addEventListener('mousedown', this.handleHandleMouseDown);
-                document.addEventListener('paste', this.handlePaste); // Prevent XSS formatting breaks
-                
-                document.addEventListener('dragstart', this.handleDragStart);
-                document.addEventListener('dragover', this.handleDragOver);
-                document.addEventListener('dragend', this.handleDragEnd);
-
-                this.initScrubber();
-            },
-
-            handleInput(e) {
-                if(!e.target.classList.contains('bullet-text')) return;
-                const blockEl = e.target.closest('.bullet-block');
-                EditorEngine.updateText(blockEl.dataset.id, e.target.textContent, blockEl);
-            },
-
-            // Intercept paste to strip HTML and prevent raw DOM injection
-            handlePaste(e) {
-                if(!e.target.classList.contains('bullet-text')) return;
-                e.preventDefault();
-                const text = (e.originalEvent || e).clipboardData.getData('text/plain');
-                document.execCommand('insertText', false, text);
-            },
-
-            handleKeydown(e) {
-                const isEditing = e.target.classList.contains('bullet-text');
-                
-                if (!isEditing) {
-                    if (e.key === 'ArrowLeft') { e.preventDefault(); EditorEngine.changePage(-1); }
-                    if (e.key === 'ArrowRight') { e.preventDefault(); EditorEngine.changePage(1); }
-                    return;
-                }
-
-                if (e.key === 'Escape') { e.preventDefault(); e.target.blur(); return; }
-
-                const blockId = e.target.closest('.bullet-block').dataset.id;
-
-                if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); EditorEngine.changePage(-1); return; }
-                if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); EditorEngine.changePage(1); return; }
-                if (e.altKey && e.key === 'Enter') { e.preventDefault(); EditorEngine.changePage(1); return; }
-                
-                if (e.ctrlKey && e.key === 'Enter') { 
-                    e.preventDefault(); 
-                    EditorEngine.cycleType(blockId);
-                    return; 
-                }
-
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    EditorEngine.splitBlock(blockId, SelectionManager.getCaretPos(e.target));
-                    return;
-                }
-
-                if (e.key === 'Tab') {
-                    e.preventDefault();
-                    EditorEngine.indentBlock(blockId, e.shiftKey ? -1 : 1);
-                    return;
-                }
-                
-                if (e.key === 'Backspace' && SelectionManager.getCaretPos(e.target) === 0) {
-                    e.preventDefault();
-                    const coords = State.getBlockCoords(blockId);
-                    if (coords.block.type !== 'text') EditorEngine.setBlockType(blockId, 'text');
-                    else if (coords.bIdx > 0) EditorEngine.mergeWithPrevious(blockId);
-                }
-
-                if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-                    const sel = window.getSelection();
-                    if (!sel.rangeCount) return;
-                    const rect = sel.getRangeAt(0).getBoundingClientRect();
-                    const elRect = e.target.getBoundingClientRect();
-                    
-                    if (e.key === 'ArrowUp' && (rect.top - elRect.top < 24)) {
-                        e.preventDefault(); EditorEngine.navigateVertical(blockId, -1);
-                    } else if (e.key === 'ArrowDown' && (elRect.bottom - rect.bottom < 24)) {
-                        e.preventDefault(); EditorEngine.navigateVertical(blockId, 1);
-                    }
-                }
-            },
-
-            handleHandleMouseDown(e) {
-                const handle = e.target.closest('.bullet-handle');
-                if (handle) {
-                    const block = handle.closest('.bullet-block');
-                    block.setAttribute('draggable', 'true');
-                    
-                    const cleanup = () => {
-                        block.setAttribute('draggable', 'false');
-                        document.removeEventListener('mouseup', cleanup);
-                        handle.removeEventListener('mouseleave', cleanup);
+                getBlockClasses(b) {
+                    let cls =
+                        "flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ";
+                    const styles = {
+                        h1: "text-4xl font-bold mt-6 mb-2 ",
+                        h2: "text-3xl font-bold mt-5 mb-2 ",
+                        h3: "text-2xl font-bold mt-4 mb-1 ",
+                        h4: "text-xl font-semibold mt-3 mb-1 ",
+                        h5: "text-lg font-semibold mt-2 mb-1 ",
+                        h6: "text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500 ",
                     };
-                    document.addEventListener('mouseup', cleanup);
-                    handle.addEventListener('mouseleave', cleanup);
-                }
-            },
+                    cls += styles[b.type] || "text-[1.05rem] leading-relaxed ";
+                    if (b.type === "completed")
+                        cls += "line-through text-zinc-400 opacity-60";
+                    else if (["migrated", "scheduled"].includes(b.type))
+                        cls += "italic text-zinc-500";
+                    return cls;
+                },
 
-            draggedId: null,
+                updateBlock(block, el) {
+                    const blockEl =
+                        el || document.querySelector(`[data-id="${block.id}"]`);
+                    if (!blockEl) return;
+                    blockEl.style.marginLeft = `${block.depth * 28}px`;
+                    const isBullet = CYCLE.includes(block.type);
+                    const handleEl = blockEl.querySelector(".bullet-handle");
+                    handleEl.className = `absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isBullet ? "opacity-40 text-zinc-500" : "opacity-0 text-zinc-300"} group-hover:opacity-100 hover:!text-black font-bold transition-all`;
+                    handleEl.innerHTML = isBullet ? BULLETS[block.type] : "::";
+                    const textEl = blockEl.querySelector(".bullet-text");
+                    textEl.className = this.getBlockClasses(block);
+                    if (textEl.textContent !== block.text)
+                        textEl.textContent = block.text;
+                },
 
-            handleDragStart(e) {
-                const block = e.target.closest('.bullet-block');
-                if(block && block.getAttribute('draggable') === 'true') {
-                    EventController.draggedId = block.dataset.id;
-                    Promise.resolve().then(() => block.classList.add('dragging'));
-                } else e.preventDefault(); 
-            },
+                insertBlockAfter(pIdx, refBlockId, newBlock) {
+                    const list = document.querySelector(
+                        `.bujo-list[data-idx="${pIdx}"]`,
+                    );
+                    const refEl = list.querySelector(
+                        `[data-id="${refBlockId}"]`,
+                    );
+                    refEl.insertAdjacentHTML(
+                        "afterend",
+                        this.generateBlockHTML(newBlock),
+                    );
+                },
 
-            handleDragOver(e) {
-                e.preventDefault();
-                const target = e.target.closest('.bullet-block');
-                const draggedId = EventController.draggedId;
-                if(target && target.dataset.id !== draggedId) {
-                    const rect = target.getBoundingClientRect();
-                    const draggedEl = document.querySelector(`[data-id="${draggedId}"]`);
-                    if (e.clientY > rect.top + rect.height / 2) target.parentNode.insertBefore(draggedEl, target.nextSibling);
-                    else target.parentNode.insertBefore(draggedEl, target);
-                }
-            },
+                removeBlock(blockId) {
+                    const blockEl = document.querySelector(
+                        `[data-id="${blockId}"]`,
+                    );
+                    if (blockEl) blockEl.remove();
+                },
 
-            handleDragEnd(e) {
-                const el = document.querySelector(`[data-id="${EventController.draggedId}"]`);
-                if(el) {
-                    el.classList.remove('dragging'); 
-                    el.setAttribute('draggable', 'false'); 
-                    
-                    const prev = el.previousElementSibling;
-                    const next = el.nextElementSibling;
-                    const targetList = el.closest('.bujo-list');
-                    
-                    if (targetList) {
-                        if (prev) EditorEngine.moveBlockDOM(EventController.draggedId, prev.dataset.id, true);
-                        else if (next) EditorEngine.moveBlockDOM(EventController.draggedId, next.dataset.id, false);
+                updateViewport() {
+                    document.getElementById("app").style.transform =
+                        `translateX(-${State.currentP * 50}vw)`;
+                    this.renderIndicator();
+                },
+
+                renderIndicator() {
+                    const activePair = Math.floor(State.currentP / 2);
+                    document.getElementById("page-indicator").innerHTML =
+                        Array.from({
+                            length: Math.ceil(State.pages.length / 2),
+                        })
+                            .map(
+                                (_, i) =>
+                                    `<span onclick="EditorEngine.jumpToPair(${i})" class="pointer-events-none h-2 rounded-full transition-all duration-300 ${i === activePair ? "w-6 bg-zinc-800" : "w-2 bg-zinc-300 hover:bg-zinc-400"}"></span>`,
+                            )
+                            .join("");
+                },
+            };
+
+            // ==========================================
+            // 🛠️ EDITOR ENGINE
+            // ==========================================
+            const EditorEngine = {
+                updateText(blockId, newText, blockEl) {
+                    const coords = State.getBlockCoords(blockId);
+                    if (!coords) return;
+                    const { block } = coords;
+                    block.text = newText;
+
+                    for (const [prefix, type] of Object.entries(MD_MAP)) {
+                        if (block.text.startsWith(prefix)) {
+                            block.type = type;
+                            block.text = block.text.substring(prefix.length);
+                            Renderer.updateBlock(block, blockEl);
+                            SelectionManager.focusBlock(block.id, 0);
+                            break;
+                        }
                     }
-                }
-                EventController.draggedId = null;
-            },
+                    StorageManager.requestSave();
+                },
+                indentBlock(blockId, direction) {
+                    const coords = State.getBlockCoords(blockId);
+                    if (!coords) return;
+                    coords.block.depth = Math.max(
+                        0,
+                        Math.min(4, coords.block.depth + direction),
+                    );
+                    Renderer.updateBlock(coords.block);
+                    StorageManager.requestSave();
+                },
+                setBlockType(blockId, newType) {
+                    const coords = State.getBlockCoords(blockId);
+                    if (!coords) return;
+                    coords.block.type = newType;
+                    Renderer.updateBlock(coords.block);
+                    StorageManager.requestSave();
+                },
+                cycleType(blockId) {
+                    const coords = State.getBlockCoords(blockId);
+                    if (!coords) return;
+                    let currentIndex = CYCLE.indexOf(coords.block.type);
+                    this.setBlockType(
+                        blockId,
+                        currentIndex === -1
+                            ? "task"
+                            : CYCLE[(currentIndex + 1) % CYCLE.length],
+                    );
+                },
+                splitBlock(blockId, caretPos) {
+                    const coords = State.getBlockCoords(blockId);
+                    if (!coords) return;
+                    const { pIdx, bIdx, block } = coords;
+                    const txt = block.text;
+                    block.text = txt.slice(0, caretPos);
+                    const newType = block.type.startsWith("h")
+                        ? "text"
+                        : block.type;
+                    const newBlock = State.createBlock(
+                        txt.slice(caretPos),
+                        block.depth,
+                        newType,
+                    );
+                    State.pages[pIdx].splice(bIdx + 1, 0, newBlock);
+                    State.rebuildIndex();
+                    Renderer.updateBlock(block);
+                    Renderer.insertBlockAfter(pIdx, block.id, newBlock);
+                    SelectionManager.focusBlock(newBlock.id, 0);
+                    StorageManager.requestSave();
+                },
+                mergeWithPrevious(blockId) {
+                    const coords = State.getBlockCoords(blockId);
+                    if (!coords || coords.bIdx === 0) return;
+                    const { pIdx, bIdx, block } = coords;
+                    const prevBlock = State.pages[pIdx][bIdx - 1];
+                    const prevLength = prevBlock.text.length;
+                    prevBlock.text += block.text;
+                    State.pages[pIdx].splice(bIdx, 1);
+                    State.rebuildIndex();
+                    Renderer.removeBlock(block.id);
+                    Renderer.updateBlock(prevBlock);
+                    SelectionManager.focusBlock(prevBlock.id, prevLength);
+                    StorageManager.requestSave();
+                },
+                navigateVertical(blockId, direction) {
+                    const el = document.querySelector(`[data-id="${blockId}"]`);
+                    if (!el) return;
+                    const target =
+                        direction === -1
+                            ? el.previousElementSibling
+                            : el.nextElementSibling;
+                    if (target)
+                        SelectionManager.focusBlock(
+                            target.dataset.id,
+                            0,
+                            direction === -1,
+                        );
+                },
+                async changePage(dir) {
+                    const nextP = State.currentP + dir * 2;
+                    if (nextP < 0) return;
+                    State.currentP = nextP;
+                    if (await State.ensureEnoughPages()) Renderer.renderApp();
+                    else Renderer.updateViewport();
+                    StorageManager.requestSave();
+                },
+                jumpToPair(pairIdx) {
+                    State.currentP = pairIdx * 2;
+                    Renderer.updateViewport();
+                    StorageManager.requestSave();
+                },
+                moveBlockDOM(blockId, targetId, insertAfter) {
+                    const sourceCoords = State.getBlockCoords(blockId);
+                    const targetCoords = State.getBlockCoords(targetId);
+                    if (!sourceCoords || !targetCoords) return;
+                    const [movedBlock] = State.pages[sourceCoords.pIdx].splice(
+                        sourceCoords.bIdx,
+                        1,
+                    );
+                    let insertIndex = targetCoords.bIdx;
+                    if (
+                        sourceCoords.pIdx === targetCoords.pIdx &&
+                        sourceCoords.bIdx < targetCoords.bIdx
+                    )
+                        insertIndex -= 1;
+                    if (insertAfter) insertIndex += 1;
+                    State.pages[targetCoords.pIdx].splice(
+                        insertIndex,
+                        0,
+                        movedBlock,
+                    );
+                    State.rebuildIndex();
+                    Renderer.renderPage(sourceCoords.pIdx);
+                    if (sourceCoords.pIdx !== targetCoords.pIdx)
+                        Renderer.renderPage(targetCoords.pIdx);
+                    StorageManager.requestSave();
+                },
+            };
 
-            initScrubber() {
-                const indicator = document.getElementById('page-indicator');
-                let isScrubbing = false;
+            // ==========================================
+            // ⌨️ EVENT CONTROLLER (Routing)
+            // ==========================================
+            const EventController = {
+                draggedImageId: null,
+                imgStartX: 0,
+                imgStartY: 0,
+                imgInitLeft: 0,
+                imgInitTop: 0,
 
-                const scrub = (e) => {
-                    const rect = indicator.getBoundingClientRect();
-                    const pairCount = Math.ceil(State.pages.length / 2);
-                    if (pairCount <= 1) return;
-                    let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
-                    let index = Math.floor((x / rect.width) * pairCount);
-                    index = Math.min(index, pairCount - 1); 
-                    if (State.currentP !== index * 2) { 
-                        State.currentP = index * 2; 
-                        Renderer.updateViewport(); 
+                init() {
+                    document.addEventListener("input", this.handleInput);
+                    document.addEventListener("keydown", this.handleKeydown);
+                    document.addEventListener(
+                        "mousedown",
+                        this.handleHandleMouseDown,
+                    );
+                    document.addEventListener("paste", (e) =>
+                        this.handlePaste(e),
+                    );
+
+                    // 📸 Image Drag & Double-Click logic
+                    document.addEventListener(
+                        "mousedown",
+                        this.handleImgMouseDown.bind(this),
+                    );
+                    document.addEventListener(
+                        "dblclick",
+                        this.handleImgDblClick.bind(this),
+                    ); // 🎒 Save to Sticker Book Trigger
+                    window.addEventListener(
+                        "mousemove",
+                        this.handleImgMouseMove.bind(this),
+                    );
+                    window.addEventListener(
+                        "mouseup",
+                        this.handleImgMouseUp.bind(this),
+                    );
+
+                    document.addEventListener(
+                        "dragstart",
+                        this.handleDragStart,
+                    );
+                    document.addEventListener("dragover", this.handleDragOver);
+                    document.addEventListener("dragend", this.handleDragEnd);
+
+                    this.initScrubber();
+                },
+
+                handleInput(e) {
+                    if (!e.target.classList.contains("bullet-text")) return;
+                    const blockEl = e.target.closest(".bullet-block");
+                    EditorEngine.updateText(
+                        blockEl.dataset.id,
+                        e.target.textContent,
+                        blockEl,
+                    );
+                },
+
+                // ✨ UPGRADED PASTE LOGIC: Converts clipboard to Base64 immediately!
+                handlePaste(e) {
+                    const items = e.clipboardData?.items;
+                    let imagePasted = false;
+
+                    if (items) {
+                        for (let item of items) {
+                            if (item.type.startsWith("image/")) {
+                                const blob = item.getAsFile();
+
+                                // 🪄 Read as Base64 so it can be saved permanently!
+                                const reader = new FileReader();
+                                reader.onload = (event) => {
+                                    ImageManager.spawn(event.target.result);
+                                };
+                                reader.readAsDataURL(blob);
+
+                                imagePasted = true;
+                            }
+                        }
                     }
-                };
 
-                indicator.addEventListener('pointerdown', e => { 
-                    isScrubbing = true; 
-                    document.getElementById('app').style.transitionDuration = '0s'; 
-                    indicator.setPointerCapture(e.pointerId); 
-                    scrub(e); 
-                });
-                indicator.addEventListener('pointermove', e => { if (isScrubbing) scrub(e); });
-                indicator.addEventListener('pointerup', e => { 
-                    isScrubbing = false; 
-                    document.getElementById('app').style.transitionDuration = ''; 
-                    indicator.releasePointerCapture(e.pointerId); 
-                    StorageManager.requestSave(); 
-                });
+                    if (imagePasted) {
+                        e.preventDefault();
+                        return;
+                    }
+
+                    // Text Fallback
+                    if (!e.target.classList.contains("bullet-text")) return;
+                    e.preventDefault();
+                    const text = (e.originalEvent || e).clipboardData.getData(
+                        "text/plain",
+                    );
+                    document.execCommand("insertText", false, text);
+                },
+
+                handleImgDblClick(e) {
+                    if (e.target.classList.contains("draggable-image")) {
+                        // 🎒 Save to Sticker Book!
+                        StickerBook.saveSticker(e.target.src);
+
+                        // Cute pop animation feedback ✨
+                        e.target.style.transform = "scale(1.2)";
+                        setTimeout(
+                            () => (e.target.style.transform = "scale(1)"),
+                            200,
+                        );
+                    }
+                },
+
+                handleImgMouseDown(e) {
+                    if (e.target.classList.contains("draggable-image")) {
+                        this.draggedImageId = e.target.dataset.imgId;
+                        this.imgStartX = e.clientX;
+                        this.imgStartY = e.clientY;
+                        this.imgInitLeft = parseFloat(e.target.style.left) || 0;
+                        this.imgInitTop = parseFloat(e.target.style.top) || 0;
+
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }
+                },
+
+                handleImgMouseMove(e) {
+                    if (this.draggedImageId) {
+                        const img = document.querySelector(
+                            `img[data-img-id="${this.draggedImageId}"]`,
+                        );
+                        if (img) {
+                            const dx = e.clientX - this.imgStartX;
+                            const dy = e.clientY - this.imgStartY;
+                            img.style.left = `${this.imgInitLeft + dx}px`;
+                            img.style.top = `${this.imgInitTop + dy}px`;
+                        }
+                    }
+                },
+
+                handleImgMouseUp(e) {
+                    if (this.draggedImageId) {
+                        const img = document.querySelector(
+                            `img[data-img-id="${this.draggedImageId}"]`,
+                        );
+                        if (img) {
+                            // Find the image in our persistent state 🔍
+                            const imgData = State.meta.placedImages.find(
+                                (i) => i.id === this.draggedImageId,
+                            );
+                            if (imgData) {
+                                // Update coordinates 📍
+                                imgData.left = parseFloat(img.style.left);
+                                imgData.top = parseFloat(img.style.top);
+                                // Save to file system! 💾✨
+                                StorageManager.requestSave();
+                            }
+                        }
+                        this.draggedImageId = null;
+                    }
+                },
+
+                handleKeydown(e) {
+                    const isEditing =
+                        e.target.classList.contains("bullet-text");
+                    if (!isEditing) {
+                        if (e.key === "ArrowLeft") {
+                            e.preventDefault();
+                            EditorEngine.changePage(-1);
+                        }
+                        if (e.key === "ArrowRight") {
+                            e.preventDefault();
+                            EditorEngine.changePage(1);
+                        }
+                        return;
+                    }
+                    if (e.key === "Escape") {
+                        e.preventDefault();
+                        e.target.blur();
+                        return;
+                    }
+                    const blockId =
+                        e.target.closest(".bullet-block").dataset.id;
+                    if (e.altKey && e.key === "ArrowLeft") {
+                        e.preventDefault();
+                        EditorEngine.changePage(-1);
+                        return;
+                    }
+                    if (e.altKey && e.key === "ArrowRight") {
+                        e.preventDefault();
+                        EditorEngine.changePage(1);
+                        return;
+                    }
+                    if (e.altKey && e.key === "Enter") {
+                        e.preventDefault();
+                        EditorEngine.changePage(1);
+                        return;
+                    }
+                    if (e.ctrlKey && e.key === "Enter") {
+                        e.preventDefault();
+                        EditorEngine.cycleType(blockId);
+                        return;
+                    }
+                    if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        EditorEngine.splitBlock(
+                            blockId,
+                            SelectionManager.getCaretPos(e.target),
+                        );
+                        return;
+                    }
+                    if (e.key === "Tab") {
+                        e.preventDefault();
+                        EditorEngine.indentBlock(blockId, e.shiftKey ? -1 : 1);
+                        return;
+                    }
+                    if (
+                        e.key === "Backspace" &&
+                        SelectionManager.getCaretPos(e.target) === 0
+                    ) {
+                        e.preventDefault();
+                        const coords = State.getBlockCoords(blockId);
+                        if (coords.block.type !== "text")
+                            EditorEngine.setBlockType(blockId, "text");
+                        else if (coords.bIdx > 0)
+                            EditorEngine.mergeWithPrevious(blockId);
+                    }
+                    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                        const sel = window.getSelection();
+                        if (!sel.rangeCount) return;
+                        const rect = sel.getRangeAt(0).getBoundingClientRect();
+                        const elRect = e.target.getBoundingClientRect();
+                        if (e.key === "ArrowUp" && rect.top - elRect.top < 24) {
+                            e.preventDefault();
+                            EditorEngine.navigateVertical(blockId, -1);
+                        } else if (
+                            e.key === "ArrowDown" &&
+                            elRect.bottom - rect.bottom < 24
+                        ) {
+                            e.preventDefault();
+                            EditorEngine.navigateVertical(blockId, 1);
+                        }
+                    }
+                },
+
+                handleHandleMouseDown(e) {
+                    const handle = e.target.closest(".bullet-handle");
+                    if (handle) {
+                        const block = handle.closest(".bullet-block");
+                        block.setAttribute("draggable", "true");
+                        const cleanup = () => {
+                            block.setAttribute("draggable", "false");
+                            document.removeEventListener("mouseup", cleanup);
+                            handle.removeEventListener("mouseleave", cleanup);
+                        };
+                        document.addEventListener("mouseup", cleanup);
+                        handle.addEventListener("mouseleave", cleanup);
+                    }
+                },
+
+                draggedId: null,
+
+                handleDragStart(e) {
+                    const block = e.target.closest(".bullet-block");
+                    if (block && block.getAttribute("draggable") === "true") {
+                        EventController.draggedId = block.dataset.id;
+                        Promise.resolve().then(() =>
+                            block.classList.add("dragging"),
+                        );
+                    } else e.preventDefault();
+                },
+
+                handleDragOver(e) {
+                    e.preventDefault();
+                    const target = e.target.closest(".bullet-block");
+                    const draggedId = EventController.draggedId;
+                    if (target && target.dataset.id !== draggedId) {
+                        const rect = target.getBoundingClientRect();
+                        const draggedEl = document.querySelector(
+                            `[data-id="${draggedId}"]`,
+                        );
+                        if (e.clientY > rect.top + rect.height / 2)
+                            target.parentNode.insertBefore(
+                                draggedEl,
+                                target.nextSibling,
+                            );
+                        else target.parentNode.insertBefore(draggedEl, target);
+                    }
+                },
+
+                handleDragEnd(e) {
+                    const el = document.querySelector(
+                        `[data-id="${EventController.draggedId}"]`,
+                    );
+                    if (el) {
+                        el.classList.remove("dragging");
+                        el.setAttribute("draggable", "false");
+                        const prev = el.previousElementSibling;
+                        const next = el.nextElementSibling;
+                        const targetList = el.closest(".bujo-list");
+                        if (targetList) {
+                            if (prev)
+                                EditorEngine.moveBlockDOM(
+                                    EventController.draggedId,
+                                    prev.dataset.id,
+                                    true,
+                                );
+                            else if (next)
+                                EditorEngine.moveBlockDOM(
+                                    EventController.draggedId,
+                                    next.dataset.id,
+                                    false,
+                                );
+                        }
+                    }
+                    EventController.draggedId = null;
+                },
+
+                initScrubber() {
+                    const indicator = document.getElementById("page-indicator");
+                    let isScrubbing = false;
+                    const scrub = (e) => {
+                        const rect = indicator.getBoundingClientRect();
+                        const pairCount = Math.ceil(State.pages.length / 2);
+                        if (pairCount <= 1) return;
+                        let x = Math.max(
+                            0,
+                            Math.min(e.clientX - rect.left, rect.width),
+                        );
+                        let index = Math.floor((x / rect.width) * pairCount);
+                        index = Math.min(index, pairCount - 1);
+                        if (State.currentP !== index * 2) {
+                            State.currentP = index * 2;
+                            Renderer.updateViewport();
+                        }
+                    };
+                    indicator.addEventListener("pointerdown", (e) => {
+                        isScrubbing = true;
+                        document.getElementById(
+                            "app",
+                        ).style.transitionDuration = "0s";
+                        indicator.setPointerCapture(e.pointerId);
+                        scrub(e);
+                    });
+                    indicator.addEventListener("pointermove", (e) => {
+                        if (isScrubbing) scrub(e);
+                    });
+                    indicator.addEventListener("pointerup", (e) => {
+                        isScrubbing = false;
+                        document.getElementById(
+                            "app",
+                        ).style.transitionDuration = "";
+                        indicator.releasePointerCapture(e.pointerId);
+                        StorageManager.requestSave();
+                    });
+                },
+            };
+
+            // ==========================================
+            // 🚀 BOOTSTRAP
+            // ==========================================
+            async function startApp() {
+                await State.init();
+                StickerBook.init(); // Initialize the book UI! 🎒
+                Renderer.renderApp();
+                EventController.init();
             }
-        };
 
-        // ==========================================
-        // 🚀 BOOTSTRAP
-        // ==========================================
-        async function startApp() {
-            await State.init();
-            Renderer.renderApp();
-            EventController.init();
-        }
-
-        startApp();
-    </script>
-</body>
+            startApp();
+        </script>
+    </body>
 </html>
