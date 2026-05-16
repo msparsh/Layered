@@ -26,8 +26,15 @@
             .bullet-text { cursor: text; user-select: text; word-break: break-word; -webkit-hyphens: auto; hyphens: auto; }
 
             /* 📸 Draggable Image Styles */
-            .draggable-image { position: absolute; cursor: grab; max-width: 300px; filter: drop-shadow(0px 8px 12px rgba(0, 0, 0, 0.15)); user-select: none; z-index: 40; transition: transform 0.2s ease; }
+            .draggable-image { position: absolute; top: 0; left: 0; cursor: grab; max-width: 300px; filter: drop-shadow(0px 8px 12px rgba(0, 0, 0, 0.15)); user-select: none; transition: transform 0.2s ease, scale 0.2s ease, rotate 0.2s ease, opacity 0.2s ease; }
             .draggable-image:active { cursor: grabbing; }
+            .draggable-image[data-locked="true"] { cursor: default; }
+            .draggable-image[data-locked="true"]:active { cursor: default; }
+            .layer-background { z-index: 10; }
+            .layer-paper { z-index: 20; }
+            .layer-sticker { z-index: 30; }
+            .layer-floating { z-index: 40; }
+            .layer-focus { z-index: 50; }
         </style>
     </head>
     <body class="text-zinc-800">
@@ -90,10 +97,25 @@
                             if (!img.pageId) {
                                 img.pageId = m.pageOrder[Math.floor((m.currentP || 0) / 2) * 2] || m.pageOrder[0];
                             }
-                            // Migrate legacy pixel X coordinates to relative percentages
-                            if (img.left > 100) {
-                                img.left = (img.left / (window.innerWidth / 2)) * 100;
-                                if(img.left > 100 || img.left < 0) img.left = 25; // safe fallback
+                            
+                            // Migrate legacy positioning to anchorBlockId & Translate3D
+                            if (img.anchorBlockId === undefined) {
+                                try {
+                                    const pageBlocks = await FileSystemAPI.readJson(`pages/${img.pageId}.json`);
+                                    if (pageBlocks && pageBlocks.length > 0) {
+                                        img.anchorBlockId = pageBlocks[0].id;
+                                    }
+                                } catch (e) {}
+                                if (!img.anchorBlockId) img.anchorBlockId = "migration-placeholder";
+                                
+                                img.offsetX = (img.left || 25) * 4; 
+                                img.offsetY = (img.top || 100) - 96;
+                                delete img.left;
+                                delete img.top;
+                            }
+                            if (img.zIndex !== undefined) {
+                                img.layerBucket = img.zIndex >= 40 ? 'floating' : (img.zIndex < 30 ? 'paper' : 'sticker');
+                                delete img.zIndex;
                             }
                             return img;
                         }));
@@ -218,13 +240,13 @@
                     this.hide();
                     const menu = document.createElement("div");
                     menu.id = "custom-context-menu";
-                    menu.className = "fixed bg-white border border-zinc-200 shadow-xl rounded-md py-1 z-[100] min-w-[150px]";
+                    menu.className = "fixed bg-white border border-zinc-200 shadow-xl rounded-md py-1 z-[100] min-w-max";
                     menu.style.left = `${x}px`;
                     menu.style.top = `${y}px`;
                     
                     items.forEach(item => {
                         const btn = document.createElement("button");
-                        btn.className = `w-full text-left px-4 py-2 hover:bg-zinc-100 text-sm ${item.danger ? 'text-red-600' : 'text-zinc-800'}`;
+                        btn.className = `w-full text-left px-3 py-1.5 hover:bg-zinc-100 text-sm ${item.danger ? 'text-red-600' : 'text-zinc-800'}`;
                         btn.innerHTML = item.label;
                         btn.onclick = (e) => {
                             e.stopPropagation();
@@ -308,28 +330,50 @@
             const ImageManager = {
                 async spawn(src, clientX, clientY) {
                     const id = crypto.randomUUID();
-                    // Store image content securely in /images/
                     await FileSystemAPI.writeJsonAtomic(`images/${id}.json`, { src });
 
-                    // Default affix to left page of current spread, using percentages for responsiveness!
-                    let left = 20, top = window.scrollY + 100, pageId = State.meta.pageOrder[State.currentP];
+                    let anchorBlockId = null;
+                    let offsetX = 0;
+                    let offsetY = 0;
+                    let pageId = State.meta.pageOrder[State.currentP];
 
                     if (clientX !== undefined && clientY !== undefined) {
-                        const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
-                        const wrapper = wrappers.find(w => {
-                            const r = w.getBoundingClientRect();
-                            return clientX >= r.left && clientX <= r.right;
-                        }) || wrappers[0];
-                        
-                        if (wrapper) {
-                            pageId = wrapper.dataset.pageId;
-                            const r = wrapper.getBoundingClientRect();
-                            left = ((clientX - r.left) / r.width) * 100;
-                            top = clientY - r.top; // Relative to the top of the wrapper
+                        const blockEl = document.elementFromPoint(clientX, clientY)?.closest('.bullet-block');
+                        if (blockEl) {
+                            anchorBlockId = blockEl.dataset.id;
+                            const rect = blockEl.getBoundingClientRect();
+                            offsetX = clientX - rect.left - 50;
+                            offsetY = clientY - rect.top - 50;
+                            const wrapper = blockEl.closest('.page-wrapper');
+                            if (wrapper) pageId = wrapper.dataset.pageId;
+                        } else {
+                            const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
+                            const wrapper = wrappers.find(w => {
+                                const r = w.getBoundingClientRect();
+                                return clientX >= r.left && clientX <= r.right;
+                            }) || wrappers[0];
+                            if (wrapper) {
+                                pageId = wrapper.dataset.pageId;
+                                const blocks = Array.from(wrapper.querySelectorAll('.bullet-block'));
+                                if (blocks.length > 0) {
+                                    anchorBlockId = blocks[0].dataset.id;
+                                    const rect = blocks[0].getBoundingClientRect();
+                                    offsetX = clientX - rect.left - 50;
+                                    offsetY = clientY - rect.top - 50;
+                                }
+                            }
                         }
                     }
 
-                    const imgData = { id, pageId, left, top };
+                    if (!anchorBlockId) {
+                        const pIdx = State.currentP;
+                        const pageBlocks = State.pages[pIdx];
+                        if (pageBlocks && pageBlocks.length > 0) anchorBlockId = pageBlocks[0].id;
+                        offsetX = 50;
+                        offsetY = 50;
+                    }
+
+                    const imgData = { id, pageId, anchorBlockId, offsetX, offsetY, layerBucket: 'sticker' };
                     State.meta.placedImages.push(imgData);
                     StorageManager.requestSave();
                     this.renderImage(imgData);
@@ -338,18 +382,61 @@
                     const pageWrapper = document.querySelector(`.page-wrapper[data-page-id="${data.pageId}"]`);
                     if (!pageWrapper) return;
 
-                    // Read from separate file! 📁
                     const file = await FileSystemAPI.readJson(`images/${data.id}.json`);
                     if (!file || !file.src) return;
 
                     const img = document.createElement("img");
-                    Object.assign(img, { src: file.src, className: "draggable-image" });
+                    img.src = file.src;
+                    img.className = `draggable-image layer-${data.layerBucket || 'sticker'}`;
                     img.dataset.imgId = data.id;
                     img.dataset.pageId = data.pageId;
-                    Object.assign(img.style, { left: `${data.left}%`, top: `${data.top}px` });
+                    
+                    if (data.rotation) img.style.rotate = `${data.rotation}deg`;
+                    if (data.opacity !== undefined) img.style.opacity = data.opacity;
+                    if (data.locked) img.dataset.locked = "true";
 
-                    // Appending directly to the page wrapper (no clipping!)
                     pageWrapper.appendChild(img);
+                    this.updateImagePositionDOM(data, img);
+                },
+                updateImagePositionDOM(data, imgEl) {
+                    const img = imgEl || document.querySelector(`img[data-img-id="${data.id}"]`);
+                    if (!img) return;
+                    
+                    const blockEl = document.querySelector(`[data-id="${data.anchorBlockId}"]`);
+                    const wrapper = img.closest('.page-wrapper');
+                    
+                    if (blockEl && wrapper) {
+                        const blockRect = blockEl.getBoundingClientRect();
+                        const wrapperRect = wrapper.getBoundingClientRect();
+                        const finalLeft = (blockRect.left - wrapperRect.left) + (data.offsetX || 0);
+                        const finalTop = (blockRect.top - wrapperRect.top) + (data.offsetY || 0);
+                        img.style.transform = `translate3d(${finalLeft}px, ${finalTop}px, 0)`;
+                    } else if (wrapper) {
+                        img.style.transform = `translate3d(${data.offsetX || 0}px, ${data.offsetY || 0}px, 0)`;
+                    }
+                },
+                updateImagePositions() {
+                    State.meta.placedImages.forEach(data => this.updateImagePositionDOM(data));
+                },
+                updateImage(id, updates) {
+                    const imgData = State.meta.placedImages.find(i => i.id === id);
+                    if (!imgData) return;
+                    Object.assign(imgData, updates);
+                    StorageManager.requestSave();
+                    
+                    const img = document.querySelector(`img[data-img-id="${id}"]`);
+                    if (img) {
+                        if (updates.rotation !== undefined) img.style.rotate = `${updates.rotation}deg`;
+                        if (updates.layerBucket !== undefined) img.className = `draggable-image layer-${updates.layerBucket}`;
+                        if (updates.opacity !== undefined) img.style.opacity = updates.opacity;
+                        if (updates.locked !== undefined) {
+                            if (updates.locked) img.dataset.locked = "true";
+                            else delete img.dataset.locked;
+                        }
+                        if (updates.offsetX !== undefined || updates.offsetY !== undefined || updates.anchorBlockId !== undefined) {
+                            this.updateImagePositionDOM(imgData, img);
+                        }
+                    }
                 },
                 restoreAll() {
                     document.querySelectorAll(".draggable-image").forEach(el => el.remove());
@@ -390,6 +477,16 @@
                     State.pages.forEach((_, i) => this.renderPage(i));
                     ImageManager.restoreAll();
                     this.updateViewport();
+
+                    if (ImageManager.observer) ImageManager.observer.disconnect();
+                    else ImageManager.observer = new ResizeObserver(() => requestAnimationFrame(() => ImageManager.updateImagePositions()));
+                    if (ImageManager.mutObserver) ImageManager.mutObserver.disconnect();
+                    else ImageManager.mutObserver = new MutationObserver(() => requestAnimationFrame(() => ImageManager.updateImagePositions()));
+                    
+                    document.querySelectorAll('.bujo-list').forEach(list => {
+                        ImageManager.observer.observe(list);
+                        ImageManager.mutObserver.observe(list, { childList: true, subtree: true, characterData: true });
+                    });
                 },
                 renderPage(pIdx) {
                     const list = document.querySelector(`.bujo-list[data-idx="${pIdx}"]`);
@@ -521,7 +618,7 @@
             // ⌨️ EVENT CONTROLLER (Routing)
             // ==========================================
             const EventController = {
-                imgDrag: { id: null, pageId: null, startX: 0, startY: 0, initL: 0, initT: 0, wrapperW: 0 },
+                imgDrag: { id: null, clickOffsetX: 0, clickOffsetY: 0, origPointerEvents: "", origZIndex: "", origTransition: "" },
                 draggedId: null,
 
                 init() {
@@ -578,8 +675,34 @@
                     
                     if (draggableImg) {
                         e.preventDefault();
+                        const id = draggableImg.dataset.imgId;
+                        const imgData = State.meta.placedImages.find(i => i.id === id);
+                        if (!imgData) return;
+                        
+                        const isLocked = imgData.locked;
+                        
                         ContextMenu.show(e.clientX, e.clientY, [
-                            { label: "🗑️ Delete Image", danger: true, action: () => ImageManager.removeImage(draggableImg.dataset.imgId) }
+                            { label: isLocked ? "🔓 Unlock Position" : "🔒 Lock Position", action: () => ImageManager.updateImage(id, { locked: !isLocked }) },
+                            { label: "🔄 Rotate 45°", action: () => ImageManager.updateImage(id, { rotation: ((imgData.rotation || 0) + 45) % 360 }) },
+                            { label: "🔼 Bring Forward", action: () => {
+                                const layers = ['background', 'paper', 'sticker', 'floating', 'focus'];
+                                const curr = imgData.layerBucket || 'sticker';
+                                const next = layers[Math.min(layers.length - 1, layers.indexOf(curr) + 1)];
+                                ImageManager.updateImage(id, { layerBucket: next });
+                            }},
+                            { label: "🔽 Send Backward", action: () => {
+                                const layers = ['background', 'paper', 'sticker', 'floating', 'focus'];
+                                const curr = imgData.layerBucket || 'sticker';
+                                const prev = layers[Math.max(0, layers.indexOf(curr) - 1)];
+                                ImageManager.updateImage(id, { layerBucket: prev });
+                            }},
+                            { label: "👻 Change Opacity", action: () => {
+                                const opacities = [1, 0.75, 0.5, 0.25];
+                                const current = imgData.opacity !== undefined ? imgData.opacity : 1;
+                                const next = opacities[(opacities.indexOf(current) + 1) % opacities.length];
+                                ImageManager.updateImage(id, { opacity: next });
+                            }},
+                            { label: "🗑️ Delete Image", danger: true, action: () => ImageManager.removeImage(id) }
                         ]);
                     } else if (stickerItem) {
                         e.preventDefault();
@@ -617,34 +740,43 @@
                         // We fetch the real src back from the images folder before saving to drawer
                         const file = await FileSystemAPI.readJson(`images/${e.target.dataset.imgId}.json`);
                         if(file) StickerBook.saveSticker(file.src);
-                        e.target.style.transform = "scale(1.2)";
-                        setTimeout(() => (e.target.style.transform = "scale(1)"), 200);
+                        e.target.style.scale = "1.2";
+                        setTimeout(() => (e.target.style.scale = "1"), 200);
                     }
                 },
                 handleImgMouseDown: (e) => {
                     if (!e.target.classList.contains("draggable-image")) return;
-                    const wrapper = e.target.closest('.page-wrapper');
+                    if (e.target.dataset.locked === "true") return;
+                    
+                    const rect = e.target.getBoundingClientRect();
                     EventController.imgDrag = {
                         id: e.target.dataset.imgId,
-                        pageId: e.target.dataset.pageId,
-                        startX: e.clientX,
-                        startY: e.clientY,
-                        initL: parseFloat(e.target.style.left) || 0, // This is a percentage now
-                        initT: parseFloat(e.target.style.top) || 0,  // This remains pixels
-                        wrapperW: wrapper ? wrapper.getBoundingClientRect().width : (window.innerWidth / 2)
+                        clickOffsetX: e.clientX - rect.left,
+                        clickOffsetY: e.clientY - rect.top,
+                        origPointerEvents: e.target.style.pointerEvents,
+                        origZIndex: e.target.style.zIndex,
+                        origTransition: e.target.style.transition
                     };
+                    e.target.style.pointerEvents = "none";
+                    e.target.style.zIndex = "100";
+                    e.target.style.transition = "none";
                     e.preventDefault(); e.stopPropagation();
                 },
                 handleImgMouseMove: (e) => {
-                    const { id, startX, startY, initL, initT, wrapperW } = EventController.imgDrag;
-                    if (!id) return;
-                    const img = document.querySelector(`img[data-img-id="${id}"]`);
+                    const drag = EventController.imgDrag;
+                    if (!drag.id) return;
+                    const img = document.querySelector(`img[data-img-id="${drag.id}"]`);
                     if (img) {
-                        const deltaXPct = ((e.clientX - startX) / wrapperW) * 100;
-                        Object.assign(img.style, { left: `${initL + deltaXPct}%`, top: `${initT + (e.clientY - startY)}px` });
+                        const wrapper = img.closest('.page-wrapper');
+                        if (wrapper) {
+                            const wrapperRect = wrapper.getBoundingClientRect();
+                            const finalLeft = (e.clientX - drag.clickOffsetX) - wrapperRect.left;
+                            const finalTop = (e.clientY - drag.clickOffsetY) - wrapperRect.top;
+                            img.style.transform = `translate3d(${finalLeft}px, ${finalTop}px, 0)`;
+                        }
                     }
                 },
-                handleImgMouseUp: () => {
+                handleImgMouseUp: (e) => {
                     const drag = EventController.imgDrag;
                     if (!drag.id) return;
 
@@ -652,29 +784,44 @@
                     const imgData = State.meta.placedImages.find(i => i.id === drag.id);
 
                     if (img && imgData) {
-                        const rect = img.getBoundingClientRect();
-                        const isRightPage = (rect.left + rect.width / 2) > (window.innerWidth / 2);
-                        const newPIdx = State.currentP + (isRightPage ? 1 : 0);
-                        const newPageId = State.meta.pageOrder[newPIdx];
+                        img.style.pointerEvents = drag.origPointerEvents || "";
+                        img.style.zIndex = drag.origZIndex || "";
+                        img.style.transition = drag.origTransition || "";
 
-                        // Cross-page movement logic and recalculation 🗺️
-                        if (newPageId && newPageId !== drag.pageId) {
-                            const newWrapper = document.querySelector(`.page-wrapper[data-page-id="${newPageId}"]`);
+                        const blockEl = document.elementFromPoint(e.clientX, e.clientY)?.closest('.bullet-block');
+                        if (blockEl) {
+                            imgData.anchorBlockId = blockEl.dataset.id;
+                            const blockRect = blockEl.getBoundingClientRect();
+                            imgData.offsetX = (e.clientX - drag.clickOffsetX) - blockRect.left;
+                            imgData.offsetY = (e.clientY - drag.clickOffsetY) - blockRect.top;
+
+                            const newWrapper = blockEl.closest('.page-wrapper');
                             if (newWrapper) {
-                                const newWrapperRect = newWrapper.getBoundingClientRect();
-                                imgData.left = ((rect.left - newWrapperRect.left) / newWrapperRect.width) * 100;
-                                imgData.top = rect.top - newWrapperRect.top;
-                                imgData.pageId = newPageId;
-                                img.dataset.pageId = newPageId;
-
-                                newWrapper.appendChild(img); // Physically move to new wrapper
-                                Object.assign(img.style, { left: `${imgData.left}%`, top: `${imgData.top}px` });
+                                imgData.pageId = newWrapper.dataset.pageId;
+                                if (img.parentElement !== newWrapper) newWrapper.appendChild(img);
                             }
                         } else {
-                            imgData.left = parseFloat(img.style.left); // Update to new % value
-                            imgData.top = parseFloat(img.style.top);
+                            const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
+                            const closestWrapper = wrappers.find(w => {
+                                const r = w.getBoundingClientRect();
+                                return e.clientX >= r.left && e.clientX <= r.right;
+                            }) || img.closest('.page-wrapper');
+                            
+                            if (closestWrapper) {
+                                imgData.pageId = closestWrapper.dataset.pageId;
+                                if (img.parentElement !== closestWrapper) closestWrapper.appendChild(img);
+                                
+                                const oldBlock = document.querySelector(`[data-id="${imgData.anchorBlockId}"]`);
+                                if (oldBlock) {
+                                    const blockRect = oldBlock.getBoundingClientRect();
+                                    imgData.offsetX = (e.clientX - drag.clickOffsetX) - blockRect.left;
+                                    imgData.offsetY = (e.clientY - drag.clickOffsetY) - blockRect.top;
+                                }
+                            }
                         }
+                        
                         StorageManager.requestSave();
+                        ImageManager.updateImagePositionDOM(imgData, img);
                     }
                     EventController.imgDrag.id = null;
                 },
