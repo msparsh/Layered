@@ -683,13 +683,9 @@ const Renderer = {
   },
   renderApp() {
     Utils.gid(DOM_IDS.APP).innerHTML = StateManager.meta.pageOrder.map((pId, i) => {
-      const blocksHTML = (StateManager.pages[pId] || []).map(b => UI.generateBlockHTML(b)).join("");
       return `
       <div class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden" data-page-id="${pId}">
         <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">${i + 1}</div>
-        <div class="bujo-list flex-1 w-full max-w-3xl pt-24 px-12 z-0 cursor-text" data-region-page-id="${pId}">
-          ${blocksHTML}
-        </div>
       </div>`;
     }).join("");
     this.updateViewport();
