@@ -160,9 +160,12 @@ const FileSystemAPI = {
 };
 
 const StorageManager = {
-  saveTimeout: null, isSaving: false, needsSave: false,
+  saveTimeout: null, isSaving: false, needsSave: false, dirtyPages: new Set(),
   init() {
-    EventBus.on(EVENTS.SAVE_REQUESTED, (forceRender) => this.requestSave(forceRender));
+    EventBus.on(EVENTS.SAVE_REQUESTED, (payload) => {
+      if (payload && payload.pageId) this.dirtyPages.add(payload.pageId);
+      this.requestSave(payload && payload.forceRender);
+    });
   },
   async loadNotebookMeta() {
     const m = await FileSystemAPI.readJson("meta.json") || {};
@@ -173,19 +176,18 @@ const StorageManager = {
     this.isSaving = true; this.needsSave = false;
     try {
       const layoutChanged = await StateManager.cleanEmptySpreads();
-      const p = StateManager.currentP;
-      const { pageOrder, regions } = StateManager.meta;
-
-      if (pageOrder[p]) await FileSystemAPI.writeJsonAtomic(`pages/${pageOrder[p]}.json`, StateManager.pages[p]);
-
-      for (const region of regions) {
-        if (StateManager.regionPages[region.pageId]) {
-          await FileSystemAPI.writeJsonAtomic(`pages/${region.pageId}.json`, StateManager.regionPages[region.pageId]);
-        }
-      }
-
+      
       StateManager.meta.currentP = StateManager.currentP;
       await FileSystemAPI.writeJsonAtomic("meta.json", StateManager.meta);
+
+      const pagesToSave = new Set(this.dirtyPages);
+      this.dirtyPages.clear();
+
+      for (const pageId of pagesToSave) {
+        if (StateManager.pages[pageId]) {
+          await FileSystemAPI.writeJsonAtomic(`pages/${pageId}.json`, StateManager.pages[pageId]);
+        }
+      }
 
       if (layoutChanged || forceRender) EventBus.emit(EVENTS.FORCE_RENDER);
       else EventBus.emit(EVENTS.RENDER_INDICATOR);
@@ -204,7 +206,7 @@ const StorageManager = {
 // 5. STATE MANAGEMENT
 // ==========================================
 const StateManager = {
-  meta: null, pages: [], regionPages: {}, currentP: 0, blockMap: new Map(),
+  meta: null, pages: {}, currentP: 0, blockMap: new Map(),
   
   createBlock: (text = "", depth = 0, type = "text") => ({ id: Utils.generateId(), type, text, depth }),
   
@@ -214,25 +216,15 @@ const StateManager = {
       this.meta.pageOrder.push(`page-${Utils.generateId()}`, `page-${Utils.generateId()}`);
       await FileSystemAPI.writeJsonAtomic("meta.json", this.meta);
     }
-    this.pages = await Promise.all(this.meta.pageOrder.map(id =>
-      FileSystemAPI.readJson(`pages/${id}.json`).then(d => d || [this.createBlock()])
-    ));
     
-    this.pages.forEach((pageBlocks, i) => {
-      const hasContent = pageBlocks.length > 1 || (pageBlocks[0] && pageBlocks[0].text.trim() !== "");
-      if (hasContent && !this.meta.regions.some(r => r.surfaceId === this.meta.pageOrder[i])) {
-        const regionPageId = `page-${Utils.generateId()}`;
-        this.meta.regions.push({
-          id: Utils.generateId(), surfaceId: this.meta.pageOrder[i], x: 50, y: 100, width: 400, height: 500, pageId: regionPageId
-        });
-        this.regionPages[regionPageId] = [...pageBlocks];
-        this.pages[i] = [this.createBlock()];
-      }
-    });
-
+    this.pages = {};
+    await Promise.all(this.meta.pageOrder.map(async id => {
+      this.pages[id] = await FileSystemAPI.readJson(`pages/${id}.json`) || [this.createBlock()];
+    }));
+    
     await Promise.all(this.meta.regions.map(async r => {
-      if (!this.regionPages[r.pageId]) {
-        this.regionPages[r.pageId] = await FileSystemAPI.readJson(`pages/${r.pageId}.json`) || [this.createBlock()];
+      if (!this.pages[r.pageId]) {
+        this.pages[r.pageId] = await FileSystemAPI.readJson(`pages/${r.pageId}.json`) || [this.createBlock()];
       }
     }));
     
@@ -242,9 +234,8 @@ const StateManager = {
 
   rebuildIndex() {
     this.blockMap.clear();
-    this.pages.forEach((page, pIdx) => page.forEach((block, bIdx) => this.blockMap.set(block.id, { pIdx, bIdx, block })));
-    Object.entries(this.regionPages).forEach(([pageId, pageBlocks]) => {
-      pageBlocks.forEach((block, bIdx) => this.blockMap.set(block.id, { isRegion: true, pageId, bIdx, block }));
+    Object.entries(this.pages).forEach(([pageId, pageBlocks]) => {
+      pageBlocks.forEach((block, bIdx) => this.blockMap.set(block.id, { pageId, bIdx, block }));
     });
   },
 
@@ -252,25 +243,28 @@ const StateManager = {
 
   async cleanEmptySpreads() {
     let changed = false;
-    while (this.pages.length > 1 && (this.pages.length - 1) !== this.currentP) {
-      const i = this.pages.length - 1;
+    while (this.meta.pageOrder.length > 1 && (this.meta.pageOrder.length - 1) !== this.currentP) {
+      const i = this.meta.pageOrder.length - 1;
       const pId = this.meta.pageOrder[i];
+      const pageBlocks = this.pages[pId];
       const isEmpty = (p, pId) => p && p.every(b => b.text.trim() === "" && b.type === "text") && !this.meta.placedImages.some(img => img.pageId === pId) && !this.meta.regions.some(r => r.surfaceId === pId);
-      if (isEmpty(this.pages[i], pId)) {
+      if (isEmpty(pageBlocks, pId)) {
         await FileSystemAPI.trashJson(`pages/${pId}.json`);
-        this.pages.splice(i, 1); this.meta.pageOrder.splice(i, 1); this.meta.scrolls.splice(i, 1);
+        delete this.pages[pId];
+        this.meta.pageOrder.splice(i, 1); this.meta.scrolls.splice(i, 1);
         changed = true;
       } else break;
     }
-    if (this.currentP >= this.pages.length) { this.currentP = Math.max(0, this.pages.length - 1); changed = true; }
+    if (this.currentP >= this.meta.pageOrder.length) { this.currentP = Math.max(0, this.meta.pageOrder.length - 1); changed = true; }
     if (changed) this.rebuildIndex();
     return changed;
   },
 
   async ensureEnoughPages() {
-    if (this.currentP >= this.pages.length) {
-      this.meta.pageOrder.push(`page-${Utils.generateId()}`);
-      this.pages.push([this.createBlock()]);
+    if (this.currentP >= this.meta.pageOrder.length) {
+      const newPageId = `page-${Utils.generateId()}`;
+      this.meta.pageOrder.push(newPageId);
+      this.pages[newPageId] = [this.createBlock()];
       this.rebuildIndex();
       await FileSystemAPI.writeJsonAtomic("meta.json", this.meta);
       return true;
@@ -283,56 +277,44 @@ const StateManager = {
     if (c) {
       Object.assign(c.block, updates);
       EventBus.emit(EVENTS.BLOCK_UPDATED, { block: c.block });
-      EventBus.emit(EVENTS.SAVE_REQUESTED);
+      EventBus.emit(EVENTS.SAVE_REQUESTED, { pageId: c.pageId });
     }
   },
 
   addBlock(newBlock, idAfter) {
     const c = this.getBlockCoords(idAfter);
     if (!c) return;
-    const { pIdx, pageId, isRegion, bIdx } = c;
-    if (isRegion) this.regionPages[pageId].splice(bIdx + 1, 0, newBlock);
-    else this.pages[pIdx].splice(bIdx + 1, 0, newBlock);
+    const { pageId, bIdx } = c;
+    this.pages[pageId].splice(bIdx + 1, 0, newBlock);
     this.rebuildIndex();
-    EventBus.emit(EVENTS.SAVE_REQUESTED);
+    EventBus.emit(EVENTS.SAVE_REQUESTED, { pageId });
   },
 
   removeBlock(id) {
     const c = this.getBlockCoords(id);
     if (!c) return;
-    const { pIdx, pageId, isRegion, bIdx } = c;
-    if (isRegion) this.regionPages[pageId].splice(bIdx, 1);
-    else this.pages[pIdx].splice(bIdx, 1);
+    const { pageId, bIdx } = c;
+    this.pages[pageId].splice(bIdx, 1);
     this.rebuildIndex();
-    EventBus.emit(EVENTS.SAVE_REQUESTED);
+    EventBus.emit(EVENTS.SAVE_REQUESTED, { pageId });
   },
 
   moveBlockDOM(id, targetId, insertAfter) {
     const src = this.getBlockCoords(id), tgt = this.getBlockCoords(targetId);
     if (!src || !tgt) return;
     
-    const srcArray = src.isRegion ? this.regionPages[src.pageId] : this.pages[src.pIdx];
-    const tgtArray = tgt.isRegion ? this.regionPages[tgt.pageId] : this.pages[tgt.pIdx];
+    const srcArray = this.pages[src.pageId];
+    const tgtArray = this.pages[tgt.pageId];
     
     const [moved] = srcArray.splice(src.bIdx, 1);
-    const sameArray = (src.isRegion === tgt.isRegion) && (src.isRegion ? src.pageId === tgt.pageId : src.pIdx === tgt.pIdx);
+    const sameArray = (src.pageId === tgt.pageId);
     let iIdx = tgt.bIdx - (sameArray && src.bIdx < tgt.bIdx ? 1 : 0) + (insertAfter ? 1 : 0);
     
     tgtArray.splice(iIdx, 0, moved);
     this.rebuildIndex();
     
-    // 🛠️ THE FIX: Move the actual DOM element! No more FORCE_RENDER wipes! 🎉
-    const el = document.querySelector(`[data-id="${id}"]`);
-    const targetEl = document.querySelector(`[data-id="${targetId}"]`);
-    if (el && targetEl) {
-      if (insertAfter) {
-        targetEl.after(el);
-      } else {
-        targetEl.before(el);
-      }
-    }
-    
-    EventBus.emit(EVENTS.SAVE_REQUESTED);
+    EventBus.emit(EVENTS.SAVE_REQUESTED, { pageId: src.pageId });
+    if (!sameArray) EventBus.emit(EVENTS.SAVE_REQUESTED, { pageId: tgt.pageId });
   },
   
   async changePage(dirOrIdx, isRelative = true) {
@@ -657,12 +639,12 @@ const RegionManager = {
         const region = { id: regionId, surfaceId: this.surfaceId, x, y, width: w, height: h, pageId };
         
         StateManager.meta.regions.push(region);
-        StateManager.regionPages[pageId] = [StateManager.createBlock()];
+        StateManager.pages[pageId] = [StateManager.createBlock()];
         StateManager.rebuildIndex();
-        EventBus.emit(EVENTS.SAVE_REQUESTED);
+        EventBus.emit(EVENTS.SAVE_REQUESTED, { pageId });
         this.renderRegionBox(region);
         
-        setTimeout(() => EventBus.emit(EVENTS.BLOCK_FOCUSED, { id: StateManager.regionPages[pageId][0].id }), 50);
+        setTimeout(() => EventBus.emit(EVENTS.BLOCK_FOCUSED, { id: StateManager.pages[pageId][0].id }), 50);
       }
     }
   },
@@ -686,8 +668,8 @@ const RegionManager = {
   },
   renderRegionContent(pageId) {
     const list = Utils.qs(`.bujo-list[data-region-page-id="${pageId}"]`);
-    if (list && StateManager.regionPages[pageId]) {
-      list.innerHTML = StateManager.regionPages[pageId].map(b => UI.generateBlockHTML(b)).join("");
+    if (list && StateManager.pages[pageId]) {
+      list.innerHTML = StateManager.pages[pageId].map(b => UI.generateBlockHTML(b)).join("");
     }
   }
 };
@@ -700,10 +682,16 @@ const Renderer = {
     EventBus.on(EVENTS.BLOCK_UPDATED, ({ block }) => UI.updateBlockDOM(block));
   },
   renderApp() {
-    Utils.gid(DOM_IDS.APP).innerHTML = StateManager.pages.map((p, i) => `
-      <div class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden" data-page-id="${StateManager.meta.pageOrder[i]}">
+    Utils.gid(DOM_IDS.APP).innerHTML = StateManager.meta.pageOrder.map((pId, i) => {
+      const blocksHTML = (StateManager.pages[pId] || []).map(b => UI.generateBlockHTML(b)).join("");
+      return `
+      <div class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden" data-page-id="${pId}">
         <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">${i + 1}</div>
-      </div>`).join("");
+        <div class="bujo-list flex-1 w-full max-w-3xl pt-24 px-12 z-0 cursor-text" data-region-page-id="${pId}">
+          ${blocksHTML}
+        </div>
+      </div>`;
+    }).join("");
     this.updateViewport();
     EventBus.emit(EVENTS.APP_RENDERED);
   },
@@ -714,7 +702,7 @@ const Renderer = {
   },
   renderIndicator() {
     const aP = StateManager.currentP;
-    Utils.gid(DOM_IDS.INDICATOR).innerHTML = Array.from({ length: StateManager.pages.length })
+    Utils.gid(DOM_IDS.INDICATOR).innerHTML = Array.from({ length: StateManager.meta.pageOrder.length })
       .map((_, i) => `<span data-idx="${i}" class="indicator-dot pointer-events-none h-2 rounded-full transition-all duration-300 ${i === aP ? "w-6 bg-zinc-800" : "w-2 bg-zinc-300 hover:bg-zinc-400"}"></span>`).join("");
   }
 };
@@ -767,7 +755,7 @@ const EditorEngine = {
   mergeWithPrevious(id) {
     const c = StateManager.getBlockCoords(id);
     if (!c || c.bIdx === 0) return;
-    const pageArray = c.isRegion ? StateManager.regionPages[c.pageId] : StateManager.pages[c.pIdx];
+    const pageArray = StateManager.pages[c.pageId];
     const prev = pageArray[c.bIdx - 1];
     const pLen = prev.text.length;
     
@@ -1020,7 +1008,7 @@ const EventController = {
           const idx = StateManager.meta.regions.findIndex(r => r.id === id);
           if (idx !== -1) {
             const r = StateManager.meta.regions.splice(idx, 1)[0];
-            delete StateManager.regionPages[r.pageId];
+            delete StateManager.pages[r.pageId];
             FileSystemAPI.trashJson(`pages/${r.pageId}.json`);
             Utils.qs(`[data-region-id="${id}"]`)?.remove();
             StateManager.rebuildIndex();
@@ -1104,7 +1092,7 @@ const EventController = {
     const ind = Utils.gid(DOM_IDS.INDICATOR);
     let isScrubbing = false;
     const scrub = (e) => {
-      const r = ind.getBoundingClientRect(), pC = StateManager.pages.length;
+      const r = ind.getBoundingClientRect(), pC = StateManager.meta.pageOrder.length;
       if (pC <= 1) return;
       const idx = Utils.clamp(Math.floor((Utils.clamp(e.clientX - r.left, 0, r.width) / r.width) * pC), 0, pC - 1);
       if (StateManager.currentP !== idx) StateManager.changePage(idx, false);
