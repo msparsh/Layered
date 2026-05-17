@@ -368,8 +368,15 @@ const UI = {
     });
   },
 
+  contextMenuController: null, // 🛠️ FIX: Track the AbortController
+
   renderContextMenu(x, y, items) {
     this.hideContextMenu();
+    
+    // 🛠️ FIX: Initialize new controller for this menu instance
+    this.contextMenuController = new AbortController();
+    const { signal } = this.contextMenuController;
+
     const menu = document.createElement("div");
     menu.id = DOM_IDS.CONTEXT_MENU;
     menu.className = "fixed bg-white border border-zinc-200 shadow-xl rounded-md py-1 z-[100] w-48";
@@ -388,16 +395,23 @@ const UI = {
       menu.appendChild(btn);
     });
     document.body.appendChild(menu);
-    setTimeout(() => document.addEventListener("click", this.hideContextMenuBound), 0);
-    setTimeout(() => document.addEventListener("contextmenu", this.hideContextMenuBound), 0);
+    
+    // 🛠️ FIX: Attach the abort signal to automatically clean up listeners
+    setTimeout(() => {
+      document.addEventListener("click", () => this.hideContextMenu(), { signal });
+      document.addEventListener("contextmenu", () => this.hideContextMenu(), { signal });
+    }, 0);
   },
   
-  hideContextMenuBound: () => UI.hideContextMenu(),
   hideContextMenu() {
     const menu = Utils.gid(DOM_IDS.CONTEXT_MENU);
     if (menu) menu.remove();
-    document.removeEventListener("click", UI.hideContextMenuBound);
-    document.removeEventListener("contextmenu", UI.hideContextMenuBound);
+    
+    // 🛠️ FIX: Abort listeners and clear the controller
+    if (this.contextMenuController) {
+      this.contextMenuController.abort();
+      this.contextMenuController = null;
+    }
   },
 
   generateBlockHTML(b) {
@@ -709,7 +723,9 @@ const EditorEngine = {
   updateText(blockId, newText) {
     const coords = StateManager.getBlockCoords(blockId);
     if (!coords) return;
-    let newType = coords.block.type;
+    
+    const oldType = coords.block.type; // 🛠️ FIX: Cache the original type
+    let newType = oldType;
     let text = newText;
     
     for (const [prefix, type] of Object.entries(CONFIG.MD_MAP)) {
@@ -721,7 +737,8 @@ const EditorEngine = {
     }
     
     StateManager.updateBlock(blockId, { text, type: newType });
-    if (newType !== coords.block.type) {
+    // 🛠️ FIX: Compare against the cached oldType
+    if (newType !== oldType) {
       EventBus.emit(EVENTS.BLOCK_FOCUSED, { id: blockId });
     }
   },
@@ -1055,6 +1072,10 @@ const EventController = {
 
   handleDragOver(e) {
     e.preventDefault();
+    
+    // 🛠️ FIX: Prevent ghost drags when draggedId is null
+    if (!this.draggedId) return; 
+
     const target = e.target.closest(".bullet-block");
     if (target && target.dataset.id !== this.draggedId) {
       const rect = target.getBoundingClientRect(), el = Utils.qs(`[data-id="${this.draggedId}"]`);
