@@ -321,7 +321,17 @@ const StateManager = {
     tgtArray.splice(iIdx, 0, moved);
     this.rebuildIndex();
     
-    EventBus.emit(EVENTS.FORCE_RENDER);
+    // 🛠️ THE FIX: Move the actual DOM element! No more FORCE_RENDER wipes! 🎉
+    const el = document.querySelector(`[data-id="${id}"]`);
+    const targetEl = document.querySelector(`[data-id="${targetId}"]`);
+    if (el && targetEl) {
+      if (insertAfter) {
+        targetEl.after(el);
+      } else {
+        targetEl.before(el);
+      }
+    }
+    
     EventBus.emit(EVENTS.SAVE_REQUESTED);
   },
   
@@ -760,9 +770,10 @@ const EditorEngine = {
 // 8. EVENT CONTROLLER
 // ==========================================
 const EventController = {
-  imgDrag: { id: null, offsetX: 0, offsetY: 0, origPointerEvents: "", origZIndex: "", origTransition: "" },
-  regionDrag: { id: null, type: null, offsetX: 0, offsetY: 0, startX: 0, startY: 0, startW: 0, startH: 0 },
+  imgDrag: { el: null, id: null, offsetX: 0, offsetY: 0, origPointerEvents: "", origZIndex: "", origTransition: "" },
+  regionDrag: { el: null, id: null, type: null, offsetX: 0, offsetY: 0, startX: 0, startY: 0, startW: 0, startH: 0 },
   draggedId: null,
+  ticking: false,
 
   init() {
     document.addEventListener("input", e => {
@@ -790,7 +801,6 @@ const EventController = {
   },
   
   handleMouseDown(e) {
-    // 🛡️ THE FIX: Globally ignore right-clicks so they never interfere with menus!
     if (e.button !== 0) return;
 
     // Block handle drag
@@ -802,6 +812,7 @@ const EventController = {
       document.addEventListener("mouseup", clean); handle.addEventListener("mouseleave", clean);
       return;
     }
+    
     // Image drag
     const img = e.target.closest(".draggable-image");
     if (img && img.dataset.locked !== "true") {
@@ -813,22 +824,24 @@ const EventController = {
       const offsetX = (e.clientX - wrapperRect.left) - imgLeft;
       const offsetY = (e.clientY - wrapperRect.top) - imgTop;
 
-      this.imgDrag = { id: img.dataset.imgId, offsetX, offsetY, origPointerEvents: img.style.pointerEvents, origZIndex: img.style.zIndex, origTransition: img.style.transition };
+      // 🛠️ Cache the element ('el: img') so we never query it on mousemove!
+      this.imgDrag = { el: img, id: img.dataset.imgId, offsetX, offsetY, origPointerEvents: img.style.pointerEvents, origZIndex: img.style.zIndex, origTransition: img.style.transition };
       Object.assign(img.style, { pointerEvents: "none", zIndex: "100", transition: "none" });
       return e.preventDefault(), e.stopPropagation();
     }
+    
     // Region resize/move
     const resizer = e.target.closest('.region-resizer');
     if (resizer) {
       const rb = resizer.closest('.region-box');
-      this.regionDrag = { id: rb.dataset.regionId, type: 'resize', startX: e.clientX, startY: e.clientY, startW: rb.offsetWidth, startH: rb.offsetHeight };
+      this.regionDrag = { el: rb, id: rb.dataset.regionId, type: 'resize', startX: e.clientX, startY: e.clientY, startW: rb.offsetWidth, startH: rb.offsetHeight };
       return e.preventDefault(), e.stopPropagation();
     }
     const header = e.target.closest('.region-header');
     if (header) {
       const rb = header.closest('.region-box');
       const offset = Utils.calcRectOffset(e.clientX, e.clientY, rb.getBoundingClientRect());
-      this.regionDrag = { id: rb.dataset.regionId, type: 'move', offsetX: offset.x, offsetY: offset.y };
+      this.regionDrag = { el: rb, id: rb.dataset.regionId, type: 'move', offsetX: offset.x, offsetY: offset.y };
       return e.preventDefault(), e.stopPropagation();
     }
     // Global Region Draw
@@ -836,29 +849,33 @@ const EventController = {
   },
 
   handleMouseMove(e) {
-    if (this.imgDrag.id) {
-      const img = Utils.qs(`img[data-img-id="${this.imgDrag.id}"]`);
-      const wrapper = img?.closest('.page-wrapper');
-      if (img && wrapper) {
-        const offset = Utils.calcRectOffset(e.clientX - this.imgDrag.offsetX, e.clientY - this.imgDrag.offsetY, wrapper.getBoundingClientRect());
-        Object.assign(img.style, { left: `${offset.x}px`, top: `${offset.y}px`, transform: 'none' });
-      }
-    } else if (this.regionDrag.id) {
-      const rb = Utils.qs(`.region-box[data-region-id="${this.regionDrag.id}"]`);
-      if (!rb) return;
-      if (this.regionDrag.type === 'move') {
-        const wrapper = rb.closest('.page-wrapper');
-        const offset = Utils.calcRectOffset(e.clientX - this.regionDrag.offsetX, e.clientY - this.regionDrag.offsetY, wrapper.getBoundingClientRect());
-        Object.assign(rb.style, { left: `${offset.x}px`, top: `${offset.y}px` });
+    // 🛠️ THE FIX: requestAnimationFrame completely prevents layout thrashing! 🌬️
+    if (this.ticking) return;
+    this.ticking = true;
+    
+    requestAnimationFrame(() => {
+      if (this.imgDrag.id && this.imgDrag.el) {
+        const wrapper = this.imgDrag.el.closest('.page-wrapper');
+        if (wrapper) {
+          const offset = Utils.calcRectOffset(e.clientX - this.imgDrag.offsetX, e.clientY - this.imgDrag.offsetY, wrapper.getBoundingClientRect());
+          Object.assign(this.imgDrag.el.style, { left: `${offset.x}px`, top: `${offset.y}px`, transform: 'none' });
+        }
+      } else if (this.regionDrag.id && this.regionDrag.el) {
+        if (this.regionDrag.type === 'move') {
+          const wrapper = this.regionDrag.el.closest('.page-wrapper');
+          const offset = Utils.calcRectOffset(e.clientX - this.regionDrag.offsetX, e.clientY - this.regionDrag.offsetY, wrapper.getBoundingClientRect());
+          Object.assign(this.regionDrag.el.style, { left: `${offset.x}px`, top: `${offset.y}px` });
+        } else {
+          Object.assign(this.regionDrag.el.style, {
+            width: `${Math.max(CONFIG.MIN_REGION_SIZE, this.regionDrag.startW + (e.clientX - this.regionDrag.startX))}px`,
+            height: `${Math.max(CONFIG.MIN_REGION_SIZE, this.regionDrag.startH + (e.clientY - this.regionDrag.startY))}px`
+          });
+        }
       } else {
-        Object.assign(rb.style, {
-          width: `${Math.max(CONFIG.MIN_REGION_SIZE, this.regionDrag.startW + (e.clientX - this.regionDrag.startX))}px`,
-          height: `${Math.max(CONFIG.MIN_REGION_SIZE, this.regionDrag.startH + (e.clientY - this.regionDrag.startY))}px`
-        });
+        RegionManager.draw(e);
       }
-    } else {
-      RegionManager.draw(e);
-    }
+      this.ticking = false; // Reset for next frame!
+    });
   },
 
   handleMouseUp(e) {
