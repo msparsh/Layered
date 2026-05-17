@@ -1018,7 +1018,12 @@ const EventController = {
     if (block?.getAttribute("draggable") === "true") {
       this.draggedId = block.dataset.id;
       Promise.resolve().then(() => block.classList.add("dragging"));
-    } else e.preventDefault();
+    } else if (e.target.closest(".sticker-item")) {
+      // 🌟 VIP Pass: Let the sticker drag happen normally!
+      return; 
+    } else {
+      e.preventDefault();
+    }
   },
 
   handleDragOver(e) {
