@@ -790,6 +790,9 @@ const EventController = {
   },
   
   handleMouseDown(e) {
+    // 🛡️ THE FIX: Globally ignore right-clicks so they never interfere with menus!
+    if (e.button !== 0) return;
+
     // Block handle drag
     const handle = e.target.closest(".bullet-handle");
     if (handle) {
@@ -802,8 +805,15 @@ const EventController = {
     // Image drag
     const img = e.target.closest(".draggable-image");
     if (img && img.dataset.locked !== "true") {
-      const offset = Utils.calcRectOffset(e.clientX, e.clientY, img.getBoundingClientRect());
-      this.imgDrag = { id: img.dataset.imgId, offsetX: offset.x, offsetY: offset.y, origPointerEvents: img.style.pointerEvents, origZIndex: img.style.zIndex, origTransition: img.style.transition };
+      const wrapper = img.closest('.page-wrapper');
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const imgLeft = parseFloat(img.style.left) || 0;
+      const imgTop = parseFloat(img.style.top) || 0;
+      
+      const offsetX = (e.clientX - wrapperRect.left) - imgLeft;
+      const offsetY = (e.clientY - wrapperRect.top) - imgTop;
+
+      this.imgDrag = { id: img.dataset.imgId, offsetX, offsetY, origPointerEvents: img.style.pointerEvents, origZIndex: img.style.zIndex, origTransition: img.style.transition };
       Object.assign(img.style, { pointerEvents: "none", zIndex: "100", transition: "none" });
       return e.preventDefault(), e.stopPropagation();
     }
@@ -822,7 +832,7 @@ const EventController = {
       return e.preventDefault(), e.stopPropagation();
     }
     // Global Region Draw
-    if (e.button === 0) RegionManager.startDrawing(e);
+    RegionManager.startDrawing(e);
   },
 
   handleMouseMove(e) {
