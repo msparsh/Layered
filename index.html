@@ -218,9 +218,6 @@ const StateManager = {
     }
     
     this.pages = {};
-    await Promise.all(this.meta.pageOrder.map(async id => {
-      this.pages[id] = await FileSystemAPI.readJson(`pages/${id}.json`) || [this.createBlock()];
-    }));
     
     await Promise.all(this.meta.regions.map(async r => {
       if (!this.pages[r.pageId]) {
@@ -246,10 +243,10 @@ const StateManager = {
     while (this.meta.pageOrder.length > 1 && (this.meta.pageOrder.length - 1) !== this.currentP) {
       const i = this.meta.pageOrder.length - 1;
       const pId = this.meta.pageOrder[i];
-      const pageBlocks = this.pages[pId];
-      const isEmpty = (p, pId) => p && p.every(b => b.text.trim() === "" && b.type === "text") && !this.meta.placedImages.some(img => img.pageId === pId) && !this.meta.regions.some(r => r.surfaceId === pId);
-      if (isEmpty(pageBlocks, pId)) {
-        await FileSystemAPI.trashJson(`pages/${pId}.json`);
+      
+      const isEmpty = (surfaceId) => !this.meta.placedImages.some(img => img.pageId === surfaceId) && !this.meta.regions.some(r => r.surfaceId === surfaceId);
+      
+      if (isEmpty(pId)) {
         delete this.pages[pId];
         this.meta.pageOrder.splice(i, 1); this.meta.scrolls.splice(i, 1);
         changed = true;
@@ -264,7 +261,6 @@ const StateManager = {
     if (this.currentP >= this.meta.pageOrder.length) {
       const newPageId = `page-${Utils.generateId()}`;
       this.meta.pageOrder.push(newPageId);
-      this.pages[newPageId] = [this.createBlock()];
       this.rebuildIndex();
       await FileSystemAPI.writeJsonAtomic("meta.json", this.meta);
       return true;
