@@ -417,11 +417,6 @@ const UI = {
   generateRegionBoxHTML(r) {
     return `
       <div class="region-header h-5 bg-transparent cursor-grab active:cursor-grabbing rounded-t-lg flex items-center px-2 hover:bg-black/5 transition-colors group">
-        <div class="flex gap-1 opacity-20 group-hover:opacity-60 transition-opacity pointer-events-none">
-          <div class="w-1.5 h-1.5 rounded-full bg-zinc-600"></div>
-          <div class="w-1.5 h-1.5 rounded-full bg-zinc-600"></div>
-          <div class="w-1.5 h-1.5 rounded-full bg-zinc-600"></div>
-        </div>
       </div>
       <!-- 🛠️ THE FIX: Replaced p-4 with py-4 pr-4 pl-10 -->
       <div class="region-content flex-1 overflow-y-auto py-4 pr-4 pl-10 cursor-text" style="touch-action: pan-y;">
@@ -656,7 +651,9 @@ const RegionManager = {
     let el = Utils.qs(`[data-region-id="${r.id}"]`);
     if (!el) {
       el = document.createElement('div');
-      el.className = "region-box absolute bg-transparent hover:bg-white/40 border border-transparent hover:border-zinc-200 transition-all duration-300 rounded-lg flex flex-col layer-paper";      el.dataset.regionId = r.id; el.dataset.pageId = r.pageId;
+      el.className = "region-box absolute bg-transparent hover:bg-white/40 border border-transparent hover:border-zinc-200 transition-colors duration-300 rounded-lg flex flex-col layer-paper";
+      el.dataset.regionId = r.id; 
+      el.dataset.pageId = r.pageId;
       el.innerHTML = UI.generateRegionBoxHTML(r);
       wrapper.appendChild(el);
     }
