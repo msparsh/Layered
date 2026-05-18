@@ -5,7 +5,7 @@ const fs = require('fs/promises'); // Use promise-based FS
 function createWindow() {
   const win = new BrowserWindow({
     width: 1200,
-    height: 1000,
+    height: 800,
     minWidth: 450,
     minHeight: 650,
     backgroundColor: '#d1d5db',
@@ -24,6 +24,7 @@ function createWindow() {
 
   // Show window when ready to avoid flicker
   win.once('ready-to-show', () => {
+    win.maximize();
     win.show();
   });
 
