@@ -199,38 +199,42 @@
       return false;
     },
 
-    updateBlock(id, updates) {
+    async updateBlock(id, updates) {
       const c = this.getBlockCoords(id);
       if (c) {
         Object.assign(c.block, updates);
-        // Force reactivity by reassigning the page array
-        pages[c.pageId] = pages[c.pageId];
         StorageManager.dirtyPages.add(c.pageId);
-        StorageManager.requestSave();
+        await StorageManager.executeSave()        
+        // Sync DOM without re-render for this specific block
+        if (updates.text !== undefined && blockTexts[id]) {
+          if (document.activeElement !== blockTexts[id]) {
+            blockTexts[id].innerText = c.block.text;
+          }
+        }
       }
     },
 
-    addBlock(newBlock, idAfter) {
+    async addBlock(newBlock, idAfter) {
       const c = this.getBlockCoords(idAfter);
       if (!c) return;
       const { pageId, bIdx } = c;
       pages[pageId].splice(bIdx + 1, 0, newBlock);
       this.rebuildIndex();
       StorageManager.dirtyPages.add(pageId);
-      StorageManager.requestSave();
+      await StorageManager.executeSave()
     },
 
-    removeBlock(id) {
+    async removeBlock(id) {
       const c = this.getBlockCoords(id);
       if (!c) return;
       const { pageId, bIdx } = c;
       pages[pageId].splice(bIdx, 1);
       this.rebuildIndex();
       StorageManager.dirtyPages.add(pageId);
-      StorageManager.requestSave();
+      await StorageManager.executeSave()
     },
 
-    moveBlockDOM(id, targetId, insertAfter) {
+    async moveBlockDOM(id, targetId, insertAfter) {
       const src = this.getBlockCoords(id), tgt = this.getBlockCoords(targetId);
       if (!src || !tgt) return;
       
@@ -246,7 +250,7 @@
       
       StorageManager.dirtyPages.add(src.pageId);
       if (!sameArray) StorageManager.dirtyPages.add(tgt.pageId);
-      StorageManager.requestSave();
+      await StorageManager.executeSave()
     },
     
     async changePage(dirOrIdx, isRelative = true) {
@@ -255,7 +259,7 @@
       currentP = nextP;
       await this.ensureEnoughPages();
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      StorageManager.requestSave();
+      await StorageManager.executeSave()
     }
   };
 
@@ -295,14 +299,16 @@
       const id = Utils.generateId();
       await FileSystemAPI.writeJsonAtomic(`images/sticker-${id}.json`, { src: base64Src });
       meta.stickers.push(id);
-      StorageManager.requestSave();
+      meta = meta;
+      await StorageManager.executeSave()
       this.render();
     },
     async removeSticker(id) {
       const idx = meta.stickers.indexOf(id);
       if (idx !== -1) {
         meta.stickers.splice(idx, 1);
-        StorageManager.requestSave();
+        meta = meta;
+        await StorageManager.executeSave()
         this.render();
         await FileSystemAPI.trashJson(`images/sticker-${id}.json`);
       }
@@ -333,30 +339,34 @@
       }
 
       const imgData = { id, pageId, left, top, layerBucket: 'sticker' };
-      meta.placedImages.push(imgData);      StorageManager.requestSave();
+      meta.placedImages.push(imgData);      
+      await StorageManager.executeSave()
       this.renderImage(imgData);
     },
     async renderImage(data) {
       const file = await FileSystemAPI.readJson(`images/${data.id}.json`);
       if (file && file.src) {
         loadedImages[data.id] = file.src; 
+        loadedImages = { ...loadedImages };
       }
     },
-    updateImage(id, updates) {
-      const imgData = StateManager.meta.placedImages.find(i => i.id === id);
+    async updateImage(id, updates) {
+    const imgData = meta.placedImages.find(i => i.id === id);
       if (!imgData) return;
       Object.assign(imgData, updates);
-      StorageManager.requestSave();
+        meta = meta;
+      await StorageManager.executeSave()
     },
     restoreAll() {
       meta.placedImages.forEach(data => this.renderImage(data));
     },
-    removeImage(id) {
+    async removeImage(id) {
       const idx = meta.placedImages.findIndex(i => i.id === id);
       if (idx !== -1) {
         meta.placedImages.splice(idx, 1);
-        StorageManager.requestSave();
+        await StorageManager.executeSave()
         delete loadedImages[id];
+        loadedImages = { ...loadedImages };
         FileSystemAPI.trashJson(`images/${id}.json`);
       }
     }
@@ -386,7 +396,7 @@
       tempRegion.w = Math.abs(offset.x - this.startX);
       tempRegion.h = Math.abs(offset.y - this.startY);
     },
-    stopDrawing(e) {
+    async stopDrawing(e) {
       if (!isDrawingRegion) return;
       isDrawingRegion = false;
       
@@ -398,7 +408,7 @@
         pages[pageId] = [StateManager.createBlock()];
         StateManager.rebuildIndex();
         StorageManager.dirtyPages.add(pageId);
-        StorageManager.requestSave();
+        await StorageManager.executeSave()
         
         SelectionManager.focusBlockAsync(pages[pageId][0].id);
       }
@@ -410,6 +420,54 @@
     indentBlock(id, dir) {
       const c = StateManager.getBlockCoords(id);
       if (c) StateManager.updateBlock(id, { depth: Utils.clamp(c.block.depth + dir, 0, CONFIG.MAX_DEPTH) });
+    },
+    updateText(id, newText) {
+      const coords = StateManager.getBlockCoords(id);
+      if (!coords) return;
+
+      let { text, type } = coords.block;
+      let processedText = newText;
+      let newType = type;
+
+      // Check for markdown shortcuts
+      for (const [prefix, t] of Object.entries(CONFIG.MD_MAP)) {
+        if (processedText.startsWith(prefix)) {
+          newType = t;
+          processedText = processedText.substring(prefix.length);
+          break;
+        }
+      }
+
+      const isMarkdownChange = (processedText !== newText);
+      
+      // Update the underlying data
+      StateManager.updateBlock(id, { text: processedText, type: newType });
+
+      if (isMarkdownChange) {
+        // Manually update DOM and place cursor at end
+        const el = blockTexts[id];
+        if (el && document.activeElement === el) {
+          el.innerText = processedText;
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          range.collapse(false);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+        }
+      }
+
+      if (newType !== type) {
+        SelectionManager.focusBlockAsync(id);
+      }
+    },
+    syncBlockText(id, newText) {
+      const el = blockTexts[id];
+      if (el && document.activeElement !== el) {
+        // Update DOM only if not focused (external change)
+        if (el.innerText !== newText) el.innerText = newText;
+      }
+      // If focused, do nothing – user is typing, don't disturb
     },
     cycleType(id) {
       const c = StateManager.getBlockCoords(id);
@@ -425,25 +483,44 @@
       StateManager.updateBlock(id, { text: block.text.slice(0, caretPos) });
       StateManager.addBlock(newBlock, id);
       
-      SelectionManager.focusBlockAsync(newBlock.id);
+      // Manually sync DOM immediately
+      const origEl = blockTexts[id];
+      if (origEl) origEl.innerText = block.text.slice(0, caretPos);
+      
+      tick().then(() => {
+        const newEl = blockTexts[newBlock.id];
+        if (newEl) {
+          newEl.innerText = newBlock.text;
+          SelectionManager.focusBlockAsync(newBlock.id);
+        }
+      });
     },
     mergeWithPrevious(id) {
       const c = StateManager.getBlockCoords(id);
       if (!c || c.bIdx === 0) return;
-      const pageArray = pages[c.pageId];
-      const prev = pageArray[c.bIdx - 1];
-      const pLen = prev.text.length;
+      const prev = pages[c.pageId][c.bIdx - 1];
+      const merged = prev.text + c.block.text;
       
-      StateManager.updateBlock(prev.id, { text: prev.text + c.block.text });
+      StateManager.updateBlock(prev.id, { text: merged });
       StateManager.removeBlock(id);
       
-      SelectionManager.focusBlockAsync(prev.id, pLen);
+      const prevEl = blockTexts[prev.id];
+      if (prevEl) prevEl.innerText = merged;
+      SelectionManager.focusBlockAsync(prev.id, prev.text.length);
     },
     navigateVertical(id, dir) {
       const el = blockElements[id];
       if (!el) return;
       const target = dir === -1 ? el.previousElementSibling : el.nextElementSibling;
       if (target) SelectionManager.focusBlockAsync(target.dataset.id, 0, dir === -1);
+    },
+    setBlockTextContent(id) {
+      const el = blockTexts[id];
+      if (!el) return;
+      const coords = StateManager.getBlockCoords(id);
+      if (coords && el.innerText !== coords.block.text) {
+        el.innerText = coords.block.text;
+      }
     }
   };
 
@@ -532,11 +609,11 @@
       RegionManager.startDrawing(e);
     },
 
-    handleMouseMove(e) {
+    async handleMouseMove(e) {
       if (this.ticking) return;
       this.ticking = true;
       
-      requestAnimationFrame(() => {
+      requestAnimationFrame(async () => {
         if (this.imgDrag.id) {
           const wrapper = Utils.findWrapperByCoords(Array.from(Utils.qsa('.page-wrapper')), e.clientX);
           if (wrapper) {
@@ -557,6 +634,8 @@
               rData.width = Math.max(CONFIG.MIN_REGION_SIZE, this.regionDrag.startW + (e.clientX - this.regionDrag.startX));
               rData.height = Math.max(CONFIG.MIN_REGION_SIZE, this.regionDrag.startH + (e.clientY - this.regionDrag.startY));
             }
+            StorageManager.executeSave()
+
 
           }
         } else {
@@ -566,15 +645,15 @@
       });
     },
 
-    handleMouseUp(e) {
+    async handleMouseUp(e) {
       if (this.imgDrag.id) {
         imgDragId = null;
         this.imgDrag.id = null;
-        StorageManager.requestSave();
+        await StorageManager.executeSave()
       } else if (this.regionDrag.id) {
         regionDragId = null;
         this.regionDrag.id = null;
-        StorageManager.requestSave();
+        await StorageManager.executeSave()
       } else {
         RegionManager.stopDrawing(e);
       }
@@ -583,7 +662,10 @@
     handleKeydown(e) {
       const k = e.key, alt = e.altKey, ctrl = e.ctrlKey, shift = e.shiftKey;
       if (!e.target.classList.contains("bullet-text")) {
-        if (k === "ArrowLeft" || k === "ArrowRight") { e.preventDefault(); StateManager.changePage(k === "ArrowLeft" ? -1 : 1); }
+        if (k === "ArrowLeft" || k === "ArrowRight") {
+          e.preventDefault();
+          StateManager.changePage(k === "ArrowLeft" ? -1 : 1).catch(console.error);
+        }
         return;
       }
       if (k === "Escape") return e.preventDefault(), e.target.blur();
@@ -661,14 +743,14 @@
         const id = regionHeader.closest(".region-box").dataset.regionId;
         contextMenuX = e.clientX; contextMenuY = e.clientY;
         contextMenuItems = [
-          { label: "🗑️ Delete Region", danger: true, action: () => {
+          { label: "🗑️ Delete Region", danger: true, action: async () => {
             const idx = meta.regions.findIndex(r => r.id === id);
             if (idx !== -1) {
               const r = meta.regions.splice(idx, 1)[0];
               delete pages[r.pageId];
               FileSystemAPI.trashJson(`pages/${r.pageId}.json`);
               StateManager.rebuildIndex();
-              StorageManager.requestSave();
+              await StorageManager.executeSave()
             }
           }}
         ];
@@ -746,7 +828,7 @@
     const r = ind.getBoundingClientRect(), pC = meta.pageOrder.length;
     if (pC <= 1) return;
     const idx = Utils.clamp(Math.floor((Utils.clamp(e.clientX - r.left, 0, r.width) / r.width) * pC), 0, pC - 1);
-    if (StateManager.currentP !== idx) {
+    if (currentP !== idx) {    // changed line
       currentP = idx;
       clearTimeout(scrubTimeout);
       scrubTimeout = setTimeout(() => {
@@ -758,7 +840,7 @@
   // ==========================================
   // 9. APP INITIALIZATION
   // ==========================================
-  onMount(() => {
+  onMount(async () => {
     let isDestroyed = false;
     
     const initialize = async () => {
@@ -767,9 +849,21 @@
       StickerBookManager.render();
       ImageManager.restoreAll();
       EventController.init();
+      
+      // Wait for DOM to settle, then set initial text
+      await tick();
+      for (const id in blockTexts) {
+        EditorEngine.setBlockTextContent(id);
+      }
     };
 
     initialize();
+      window.addEventListener('beforeunload', () => {
+        if (StorageManager.saveTimeout) {
+          clearTimeout(StorageManager.saveTimeout);
+          StorageManager.executeSave();
+        }
+      });
 
     return () => {
       isDestroyed = true;
@@ -891,19 +985,10 @@
                       contenteditable="true" 
                       spellcheck="false"
                       bind:this={blockTexts[b.id]}
-                      bind:textContent={b.text} 
                       onkeydown={(e) => EventController.handleKeydown(e)}
-                      oninput={() => {
-                        // Check if the user typed a markdown shortcut (like "# ")
-                        const prefixMatch = Object.entries(CONFIG.MD_MAP).find(([prefix]) => b.text.startsWith(prefix));
-                        if (prefixMatch) {
-                          b.type = prefixMatch[1];
-                          b.text = b.text.substring(prefixMatch[0].length);
-                          SelectionManager.focusBlockAsync(b.id);
-                        }
-                        StorageManager.requestSave();
-                      }}
-                    ></div>
+                      oninput={(e) => EditorEngine.updateText(b.id, e.target.innerText)}
+                    >
+                    </div>
                   </div>
                 {/each}
               {/if}
@@ -955,12 +1040,12 @@
     const ind = e.currentTarget;
     if (ind._isScrubbing) indicatorScrub(e, ind);
   }}
-  onpointerup={(e) => {
+  onpointerup={async (e) => {
     const ind = e.currentTarget;
     ind._isScrubbing = false;
     Utils.gid('app').style.transitionDuration = "";
     ind.releasePointerCapture(e.pointerId);
-    StorageManager.requestSave();
+    await StorageManager.executeSave()
   }}
   onclick={(e) => {
     const dot = e.target.closest(".indicator-dot");
