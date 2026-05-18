@@ -6,8 +6,8 @@
     "scripts": {
         "dev": "vite",
         "build:vite": "vite build",
-        "start": "electron .",
-        "build": "electron-builder"
+        "start": "npm run build:vite && electron .",
+        "build": "npm run build:vite && electron-builder" 
     },
     "author": "",
     "license": "MIT",
@@ -21,6 +21,13 @@
     "build": {
         "appId": "com.notebook.app",
         "productName": "Notebook",
+        "directories": {
+            "output": "release" 
+        },
+        "files": [
+            "dist/**/*",
+            "main_electron.js"
+        ],
         "win": {
             "target": "nsis"
         }
