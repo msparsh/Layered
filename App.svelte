@@ -5,6 +5,8 @@
   let meta = $state({ pageOrder: [], stickers: [], placedImages: [], regions: [] });
   let pages = $state({});
   let currentP = $state(0);
+  let isScrubbing = $state(false);
+  let zoomedImgId = $state(null);
   
   let stickerDrawerOpen = $state(false);
   let loadedStickers = $state([]);
@@ -242,7 +244,7 @@
       pages[pageId].splice(bIdx, 1);
       this.rebuildIndex();
       StorageManager.dirtyPages.add(pageId);
-      aStorageManager.requestSave();
+      StorageManager.requestSave();
     },
 
     async moveBlockDOM(id, targetId, insertAfter) {
@@ -270,7 +272,7 @@
       currentP = nextP;
       await this.ensureEnoughPages();
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      await StorageManager.executeSave()
+      await StorageManager.executeSave();
     }
   };
 
@@ -310,16 +312,14 @@
       const id = Utils.generateId();
       await FileSystemAPI.writeJsonAtomic(`images/sticker-${id}.json`, { src: base64Src });
       meta.stickers.push(id);
-      meta = meta;
-      await StorageManager.executeSave()
+      await StorageManager.executeSave();
       this.render();
     },
     async removeSticker(id) {
       const idx = meta.stickers.indexOf(id);
       if (idx !== -1) {
         meta.stickers.splice(idx, 1);
-        meta = meta;
-        await StorageManager.executeSave()
+        await StorageManager.executeSave();
         this.render();
         await FileSystemAPI.trashJson(`images/sticker-${id}.json`);
       }
@@ -341,31 +341,27 @@
       let left = 100, top = 100;
       let pageId = meta.pageOrder[currentP];
       if (clientX !== undefined && clientY !== undefined) {
-        const wrapper = Utils.findWrapperByCoords(Array.from(Utils.qsa('.page-wrapper')), clientX);
-        if (wrapper) {
-          pageId = wrapper.dataset.pageId;
-          const offset = Utils.calcRectOffset(clientX, clientY, wrapper.getBoundingClientRect());
-          left = offset.x - 50; top = offset.y - 50;
-        }
+        left = clientX - 50; 
+        top = clientY - 50;
+        }        
+        
       }
 
       const imgData = { id, pageId, left, top, layerBucket: 'sticker' };
       meta.placedImages.push(imgData);      
-      await StorageManager.executeSave()
+      await StorageManager.executeSave();
       this.renderImage(imgData);
     },
     async renderImage(data) {
       const file = await FileSystemAPI.readJson(`images/${data.id}.json`);
       if (file && file.src) {
         loadedImages[data.id] = file.src; 
-        loadedImages = { ...loadedImages };
       }
     },
     async updateImage(id, updates) {
     const imgData = meta.placedImages.find(i => i.id === id);
       if (!imgData) return;
       Object.assign(imgData, updates);
-        meta = meta;
       StorageManager.requestSave();
     },
     restoreAll() {
@@ -375,9 +371,8 @@
       const idx = meta.placedImages.findIndex(i => i.id === id);
       if (idx !== -1) {
         meta.placedImages.splice(idx, 1);
-        await StorageManager.executeSave()
+        await StorageManager.executeSave();
         delete loadedImages[id];
-        loadedImages = { ...loadedImages };
         FileSystemAPI.trashJson(`images/${id}.json`);
       }
     }
@@ -419,7 +414,7 @@
         pages[pageId] = [StateManager.createBlock()];
         StateManager.rebuildIndex();
         StorageManager.dirtyPages.add(pageId);
-        await StorageManager.executeSave()
+        await StorageManager.executeSave();
         
         SelectionManager.focusBlockAsync(pages[pageId][0].id);
       }
@@ -626,28 +621,20 @@
       
       requestAnimationFrame(async () => {
         if (this.imgDrag.id) {
-          const wrapper = Utils.findWrapperByCoords(Array.from(Utils.qsa('.page-wrapper')), e.clientX);
-          if (wrapper) {
-            const offset = Utils.calcRectOffset(e.clientX - this.imgDrag.offsetX, e.clientY - this.imgDrag.offsetY, wrapper.getBoundingClientRect());
-            ImageManager.updateImage(this.imgDrag.id, { pageId: wrapper.dataset.pageId, left: offset.x, top: offset.y });
-          }
+          const pageId = meta.pageOrder[currentP];
+          const offsetX = e.clientX - this.imgDrag.offsetX;
+          const offsetY = e.clientY - this.imgDrag.offsetY;
+          ImageManager.updateImage(this.imgDrag.id, { pageId, left: offsetX, top: offsetY });
         } else if (this.regionDrag.id) {
           const rData = meta.regions.find(r => r.id === this.regionDrag.id);
           if (rData) {
-            if (this.regionDrag.type === 'move') {
-              const wrapper = Utils.findWrapperByCoords(Array.from(Utils.qsa('.page-wrapper')), e.clientX);
-              if (wrapper) {
-                const offset = Utils.calcRectOffset(e.clientX - this.regionDrag.offsetX, e.clientY - this.regionDrag.offsetY, wrapper.getBoundingClientRect());
-                rData.surfaceId = wrapper.dataset.pageId;
-                rData.x = offset.x; rData.y = offset.y;
-              }
-            } else {
-              rData.width = Math.max(CONFIG.MIN_REGION_SIZE, this.regionDrag.startW + (e.clientX - this.regionDrag.startX));
-              rData.height = Math.max(CONFIG.MIN_REGION_SIZE, this.regionDrag.startH + (e.clientY - this.regionDrag.startY));
-            }
-            StorageManager.requestSave()
-
-
+            const pageId = meta.pageOrder[currentP];
+            const offsetX = e.clientX - this.regionDrag.offsetX;
+            const offsetY = e.clientY - this.regionDrag.offsetY;
+            rData.surfaceId = pageId;
+            rData.x = offsetX; 
+            rData.y = offsetY;
+            StorageManager.requestSave();
           }
         } else {
           RegionManager.draw(e);
@@ -660,11 +647,11 @@
       if (this.imgDrag.id) {
         imgDragId = null;
         this.imgDrag.id = null;
-        await StorageManager.executeSave()
+        await StorageManager.executeSave();
       } else if (this.regionDrag.id) {
         regionDragId = null;
         this.regionDrag.id = null;
-        await StorageManager.executeSave()
+        await StorageManager.executeSave();
       } else {
         RegionManager.stopDrawing(e);
       }
@@ -761,7 +748,7 @@
               delete pages[r.pageId];
               FileSystemAPI.trashJson(`pages/${r.pageId}.json`);
               StateManager.rebuildIndex();
-              await StorageManager.executeSave()
+              await StorageManager.executeSave();
             }
           }}
         ];
@@ -793,10 +780,14 @@
     },
 
     async handleDblClick(e) {
-      if (e.target.classList.contains("draggable-image")) {
-        const file = await FileSystemAPI.readJson(`images/${e.target.dataset.imgId}.json`);
+      const imgEl = e.target.closest(".draggable-image");
+      if (imgEl) {
+        const id = imgEl.dataset.imgId;
+        const file = await FileSystemAPI.readJson(`images/${id}.json`);
         if (file) StickerBookManager.saveSticker(file.src);
-        e.target.style.scale = "1.2"; setTimeout(() => e.target.style.scale = "1", 200);
+        
+        zoomedImgId = id; // Trigger zoom!
+        setTimeout(() => zoomedImgId = null, 200); // Revert zoom!
       }
     },
 
@@ -950,7 +941,11 @@
   </div>
 </div>
 
-<div id="app" class="flex transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)] w-full min-h-screen will-change-transform relative items-start" style="transform: translateX(-{currentP * 100}vw)">
+<div 
+  id="app" 
+  class="flex w-full min-h-screen will-change-transform relative items-start {isScrubbing ? '!transition-none' : 'transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]'}" 
+  style="transform: translateX(-{currentP * 100}vw)"
+>
   {#each meta.pageOrder as pId, i (pId)}
     <div 
       class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden" 
@@ -1024,8 +1019,7 @@
         {#if loadedImages[img.id]}
           <img 
             src={loadedImages[img.id]}
-            class="draggable-image layer-{img.layerBucket || 'sticker'}" 
-            data-img-id={img.id}
+            class="draggable-image layer-{img.layerBucket || 'sticker'} transition-transform duration-200 {zoomedImgId === img.id ? 'scale-125' : 'scale-100'}"            data-img-id={img.id}
             data-page-id={img.pageId}
             data-locked={img.locked ? "true" : null}
             alt="placed"
@@ -1044,7 +1038,7 @@
     const ind = e.currentTarget;
     ind.setPointerCapture(e.pointerId);
     ind._isScrubbing = true;
-    Utils.gid('app').style.transitionDuration = "0s";
+    isScrubbing = true; // ✨ SVELTE WAY
     indicatorScrub(e, ind);
   }}
   onpointermove={(e) => {
@@ -1054,9 +1048,9 @@
   onpointerup={async (e) => {
     const ind = e.currentTarget;
     ind._isScrubbing = false;
-    Utils.gid('app').style.transitionDuration = "";
+    isScrubbing = false; // ✨ SVELTE WAY
     ind.releasePointerCapture(e.pointerId);
-    await StorageManager.executeSave()
+    await StorageManager.executeSave();
   }}
   onclick={(e) => {
     const dot = e.target.closest(".indicator-dot");
