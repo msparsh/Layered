@@ -105,29 +105,40 @@
     },
     async executeSave(forceRender = false) {
       if (this.isSaving) return (this.needsSave = true);
-      this.isSaving = true; this.needsSave = false;
+      this.isSaving = true; 
+      this.needsSave = false;
+      
       try {
-        const layoutChanged = await StateManager.cleanEmptySpreads();
-        
+        await StateManager.cleanEmptySpreads();
         meta.currentP = currentP;
-        await FileSystemAPI.writeJsonAtomic("meta.json", meta);
+        
+        // 🌟 FIX: Unwrap the proxy before sending to Electron!
+        const pureMeta = $state.snapshot(meta);
+        await FileSystemAPI.writeJsonAtomic("meta.json", pureMeta);
 
         const pagesToSave = new Set(this.dirtyPages);
         this.dirtyPages.clear();
 
         for (const pageId of pagesToSave) {
           if (pages[pageId]) {
-            await FileSystemAPI.writeJsonAtomic(`pages/${pageId}.json`, pages[pageId]);
+            // 🌟 FIX: Unwrap the page data proxy!
+            const purePage = $state.snapshot(pages[pageId]);
+            await FileSystemAPI.writeJsonAtomic(`pages/${pageId}.json`, purePage);
           }
         }
 
+      } catch (error) {
+        console.error("Failed to save! 😿", error);
       } finally {
         this.isSaving = false;
+        // If a save was requested WHILE we were saving, trigger it again
         if (this.needsSave) this.executeSave();
       }
     },
+    
     requestSave(forceRender = false) {
       clearTimeout(this.saveTimeout);
+      // 500ms debounce buffer ⏱️
       this.saveTimeout = setTimeout(() => this.executeSave(forceRender), CONFIG.SAVE_TIMEOUT_MS);
     },
   };
@@ -204,7 +215,7 @@
       if (c) {
         Object.assign(c.block, updates);
         StorageManager.dirtyPages.add(c.pageId);
-        await StorageManager.executeSave()        
+        StorageManager.requestSave();        
         // Sync DOM without re-render for this specific block
         if (updates.text !== undefined && blockTexts[id]) {
           if (document.activeElement !== blockTexts[id]) {
@@ -221,7 +232,7 @@
       pages[pageId].splice(bIdx + 1, 0, newBlock);
       this.rebuildIndex();
       StorageManager.dirtyPages.add(pageId);
-      await StorageManager.executeSave()
+      StorageManager.requestSave();
     },
 
     async removeBlock(id) {
@@ -231,7 +242,7 @@
       pages[pageId].splice(bIdx, 1);
       this.rebuildIndex();
       StorageManager.dirtyPages.add(pageId);
-      await StorageManager.executeSave()
+      aStorageManager.requestSave();
     },
 
     async moveBlockDOM(id, targetId, insertAfter) {
@@ -250,7 +261,7 @@
       
       StorageManager.dirtyPages.add(src.pageId);
       if (!sameArray) StorageManager.dirtyPages.add(tgt.pageId);
-      await StorageManager.executeSave()
+      StorageManager.requestSave();
     },
     
     async changePage(dirOrIdx, isRelative = true) {
@@ -355,7 +366,7 @@
       if (!imgData) return;
       Object.assign(imgData, updates);
         meta = meta;
-      await StorageManager.executeSave()
+      StorageManager.requestSave();
     },
     restoreAll() {
       meta.placedImages.forEach(data => this.renderImage(data));
@@ -634,7 +645,7 @@
               rData.width = Math.max(CONFIG.MIN_REGION_SIZE, this.regionDrag.startW + (e.clientX - this.regionDrag.startX));
               rData.height = Math.max(CONFIG.MIN_REGION_SIZE, this.regionDrag.startH + (e.clientY - this.regionDrag.startY));
             }
-            StorageManager.executeSave()
+            StorageManager.requestSave()
 
 
           }
