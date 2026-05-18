@@ -343,10 +343,8 @@
       if (clientX !== undefined && clientY !== undefined) {
         left = clientX - 50; 
         top = clientY - 50;
-        }        
+      }        
         
-      }
-
       const imgData = { id, pageId, left, top, layerBucket: 'sticker' };
       meta.placedImages.push(imgData);      
       await StorageManager.executeSave();
