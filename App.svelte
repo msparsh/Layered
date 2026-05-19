@@ -7,10 +7,10 @@
   let currentP = $state(0);
   let isScrubbing = $state(false);
   let zoomedImgId = $state(null);
-  
+
   let stickerDrawerOpen = $state(false);
   let loadedStickers = $state([]);
-  
+
   let contextMenuVisible = $state(false);
   let contextMenuX = $state(0);
   let contextMenuY = $state(0);
@@ -21,7 +21,7 @@
   let regionDragId = $state(null);
   let imgDragId = $state(null);
   let blockDraggingId = $state(null);
-  
+
   let pageWrappers = {};
   let blockElements = {};
   let blockTexts = {};
@@ -107,13 +107,13 @@
     },
     async executeSave(forceRender = false) {
       if (this.isSaving) return (this.needsSave = true);
-      this.isSaving = true; 
+      this.isSaving = true;
       this.needsSave = false;
-      
+
       try {
         await StateManager.cleanEmptySpreads();
         meta.currentP = currentP;
-        
+
         // 🌟 FIX: Unwrap the proxy before sending to Electron!
         const pureMeta = $state.snapshot(meta);
         await FileSystemAPI.writeJsonAtomic("meta.json", pureMeta);
@@ -137,7 +137,7 @@
         if (this.needsSave) this.executeSave();
       }
     },
-    
+
     requestSave(forceRender = false) {
       clearTimeout(this.saveTimeout);
       // 500ms debounce buffer ⏱️
@@ -150,25 +150,25 @@
   // ==========================================
   const StateManager = {
     blockMap: new Map(),
-    
+
     createBlock: (text = "", depth = 0, type = "text") => ({ id: Utils.generateId(), type, text, depth }),
-    
+
     async init() {
       const loadedMeta = await StorageManager.loadNotebookMeta();
       if (loadedMeta.pageOrder.length === 0) {
         loadedMeta.pageOrder.push(`page-${Utils.generateId()}`, `page-${Utils.generateId()}`);
         await FileSystemAPI.writeJsonAtomic("meta.json", loadedMeta);
       }
-      
+
       meta = loadedMeta;
       pages = {};
-      
+
       await Promise.all(meta.regions.map(async r => {
         if (!pages[r.pageId]) {
           pages[r.pageId] = await FileSystemAPI.readJson(`pages/${r.pageId}.json`) || [this.createBlock()];
         }
       }));
-      
+
       currentP = meta.currentP || 0;
       this.rebuildIndex();
     },
@@ -187,9 +187,9 @@
       while (meta.pageOrder.length > 1 && (meta.pageOrder.length - 1) !== currentP) {
         const i = meta.pageOrder.length - 1;
         const pId = meta.pageOrder[i];
-        
+
         const isEmpty = (surfaceId) => !meta.placedImages.some(img => img.pageId === surfaceId) && !meta.regions.some(r => r.surfaceId === surfaceId);
-        
+
         if (isEmpty(pId)) {
           delete pages[pId];
           meta.pageOrder.splice(i, 1); meta.scrolls.splice(i, 1);
@@ -217,7 +217,7 @@
       if (c) {
         Object.assign(c.block, updates);
         StorageManager.dirtyPages.add(c.pageId);
-        StorageManager.requestSave();        
+        StorageManager.requestSave();
         // Sync DOM without re-render for this specific block
         if (updates.text !== undefined && blockTexts[id]) {
           if (document.activeElement !== blockTexts[id]) {
@@ -250,22 +250,22 @@
     async moveBlockDOM(id, targetId, insertAfter) {
       const src = this.getBlockCoords(id), tgt = this.getBlockCoords(targetId);
       if (!src || !tgt) return;
-      
+
       const srcArray = pages[src.pageId];
       const tgtArray = pages[tgt.pageId];
-      
+
       const [moved] = srcArray.splice(src.bIdx, 1);
       const sameArray = (src.pageId === tgt.pageId);
       let iIdx = tgt.bIdx - (sameArray && src.bIdx < tgt.bIdx ? 1 : 0) + (insertAfter ? 1 : 0);
-      
+
       tgtArray.splice(iIdx, 0, moved);
       this.rebuildIndex();
-      
+
       StorageManager.dirtyPages.add(src.pageId);
       if (!sameArray) StorageManager.dirtyPages.add(tgt.pageId);
       StorageManager.requestSave();
     },
-    
+
     async changePage(dirOrIdx, isRelative = true) {
       const nextP = isRelative ? currentP + dirOrIdx : dirOrIdx;
       if (nextP < 0) return;
@@ -341,19 +341,19 @@
       let left = 100, top = 100;
       let pageId = meta.pageOrder[currentP];
       if (clientX !== undefined && clientY !== undefined) {
-        left = clientX - 50; 
+        left = clientX - 50;
         top = clientY - 50;
-      }        
-        
+      }
+
       const imgData = { id, pageId, left, top, layerBucket: 'sticker' };
-      meta.placedImages.push(imgData);      
+      meta.placedImages.push(imgData);
       await StorageManager.executeSave();
       this.renderImage(imgData);
     },
     async renderImage(data) {
       const file = await FileSystemAPI.readJson(`images/${data.id}.json`);
       if (file && file.src) {
-        loadedImages[data.id] = file.src; 
+        loadedImages[data.id] = file.src;
       }
     },
     async updateImage(id, updates) {
@@ -381,19 +381,19 @@
     startDrawing(e) {
       const wrapper = e.target.closest('.page-wrapper');
       if (!wrapper || e.target.closest('.region-box') || e.target.closest('.draggable-image') || e.target.closest('button') || e.target.closest('#sticker-drawer') || e.target.closest('#page-indicator')) return;
-      
+
       isDrawingRegion = true;
       this.surfaceId = wrapper.dataset.pageId;
       const offset = Utils.calcRectOffset(e.clientX, e.clientY, wrapper.getBoundingClientRect());
       this.startX = offset.x; this.startY = offset.y;
-      
+
       tempRegion = { x: this.startX, y: this.startY, w: 0, h: 0, surfaceId: this.surfaceId };
     },
     draw(e) {
       if (!isDrawingRegion) return;
       const wrapper = pageWrappers[this.surfaceId];
       if (!wrapper) return;
-      
+
       const offset = Utils.calcRectOffset(e.clientX, e.clientY, wrapper.getBoundingClientRect());
       tempRegion.x = Math.min(this.startX, offset.x);
       tempRegion.y = Math.min(this.startY, offset.y);
@@ -403,17 +403,17 @@
     async stopDrawing(e) {
       if (!isDrawingRegion) return;
       isDrawingRegion = false;
-      
+
       if (tempRegion.w > CONFIG.MIN_REGION_SIZE && tempRegion.h > CONFIG.MIN_REGION_SIZE) {
         const regionId = Utils.generateId(), pageId = `page-${Utils.generateId()}`;
         const region = { id: regionId, surfaceId: this.surfaceId, x: tempRegion.x, y: tempRegion.y, width: tempRegion.w, height: tempRegion.h, pageId };
-        
+
         meta.regions.push(region);
         pages[pageId] = [StateManager.createBlock()];
         StateManager.rebuildIndex();
         StorageManager.dirtyPages.add(pageId);
         await StorageManager.executeSave();
-        
+
         SelectionManager.focusBlockAsync(pages[pageId][0].id);
       }
     }
@@ -443,7 +443,7 @@
       }
 
       const isMarkdownChange = (processedText !== newText);
-      
+
       // Update the underlying data
       StateManager.updateBlock(id, { text: processedText, type: newType });
 
@@ -483,14 +483,14 @@
       const { block } = c;
       const newType = block.type.startsWith("h") ? "text" : block.type;
       const newBlock = StateManager.createBlock(block.text.slice(caretPos), block.depth, newType);
-      
+
       StateManager.updateBlock(id, { text: block.text.slice(0, caretPos) });
       StateManager.addBlock(newBlock, id);
-      
+
       // Manually sync DOM immediately
       const origEl = blockTexts[id];
       if (origEl) origEl.innerText = block.text.slice(0, caretPos);
-      
+
       tick().then(() => {
         const newEl = blockTexts[newBlock.id];
         if (newEl) {
@@ -504,10 +504,10 @@
       if (!c || c.bIdx === 0) return;
       const prev = pages[c.pageId][c.bIdx - 1];
       const merged = prev.text + c.block.text;
-      
+
       StateManager.updateBlock(prev.id, { text: merged });
       StateManager.removeBlock(id);
-      
+
       const prevEl = blockTexts[prev.id];
       if (prevEl) prevEl.innerText = merged;
       SelectionManager.focusBlockAsync(prev.id, prev.text.length);
@@ -539,8 +539,6 @@
 
     init() {
       // Global events we must bind manually
-      this.boundMouseMove = this.handleMouseMove.bind(this);
-      this.boundMouseUp = this.handleMouseUp.bind(this);
       this.boundPaste = this.handlePaste.bind(this);
       this.boundDrop = this.handleDrop.bind(this);
       this.boundClick = () => contextMenuVisible = false;
@@ -550,21 +548,19 @@
       window.addEventListener("mouseup", this.boundMouseUp);
       document.addEventListener("paste", this.boundPaste);
       document.addEventListener("drop", this.boundDrop);
-      
+
       // Global unhandled clicks close context menu
       document.addEventListener("click", this.boundClick);
       document.addEventListener("contextmenu", this.boundContextMenu);
     },
-    
+
     destroy() {
-      window.removeEventListener("mousemove", this.boundMouseMove);
-      window.removeEventListener("mouseup", this.boundMouseUp);
       document.removeEventListener("paste", this.boundPaste);
       document.removeEventListener("drop", this.boundDrop);
       document.removeEventListener("click", this.boundClick);
       document.removeEventListener("contextmenu", this.boundContextMenu);
     },
-    
+
     handleMouseDown(e) {
       if (e.button !== 0) return;
 
@@ -576,7 +572,7 @@
         document.addEventListener("mouseup", clean); handle.addEventListener("mouseleave", clean);
         return;
       }
-      
+
       const img = e.target.closest(".draggable-image");
       if (img && img.dataset.locked !== "true") {
         const wrapper = img.closest('.page-wrapper');
@@ -585,7 +581,7 @@
         if(!imgData) return;
         const imgLeft = imgData.left || 0;
         const imgTop = imgData.top || 0;
-        
+
         const offsetX = (e.clientX - wrapperRect.left) - imgLeft;
         const offsetY = (e.clientY - wrapperRect.top) - imgTop;
 
@@ -593,7 +589,7 @@
         this.imgDrag = { id: imgDragId, offsetX, offsetY };
         return e.preventDefault(), e.stopPropagation();
       }
-      
+
       const resizer = e.target.closest('.region-resizer');
       if (resizer) {
         const rb = resizer.closest('.region-box');
@@ -609,14 +605,14 @@
         this.regionDrag = { id: regionDragId, type: 'move', offsetX: offset.x, offsetY: offset.y };
         return e.preventDefault(), e.stopPropagation();
       }
-      
+
       RegionManager.startDrawing(e);
     },
 
     async handleMouseMove(e) {
       if (this.ticking) return;
       this.ticking = true;
-      
+
       requestAnimationFrame(async () => {
         if (this.imgDrag.id) {
           const pageId = meta.pageOrder[currentP];
@@ -630,7 +626,7 @@
             const offsetX = e.clientX - this.regionDrag.offsetX;
             const offsetY = e.clientY - this.regionDrag.offsetY;
             rData.surfaceId = pageId;
-            rData.x = offsetX; 
+            rData.x = offsetX;
             rData.y = offsetY;
             StorageManager.requestSave();
           }
@@ -733,7 +729,7 @@
       const regionHeader = e.target.closest(".region-header");
       const img = e.target.closest(".draggable-image");
       const sticker = e.target.closest(".sticker-item");
-      
+
       if (regionHeader) {
         e.preventDefault(); e.stopPropagation();
         const id = regionHeader.closest(".region-box").dataset.regionId;
@@ -783,7 +779,7 @@
         const id = imgEl.dataset.imgId;
         const file = await FileSystemAPI.readJson(`images/${id}.json`);
         if (file) StickerBookManager.saveSticker(file.src);
-        
+
         zoomedImgId = id; // Trigger zoom!
         setTimeout(() => zoomedImgId = null, 200); // Revert zoom!
       }
@@ -795,7 +791,7 @@
         this.draggedId = block.dataset.id;
         blockDraggingId = this.draggedId;
       } else if (e.target.closest(".sticker-item")) {
-        return; 
+        return;
       } else {
         e.preventDefault();
       }
@@ -803,7 +799,7 @@
 
     handleDragOver(e) {
       e.preventDefault();
-      if (!this.draggedId) return; 
+      if (!this.draggedId) return;
 
       const target = e.target.closest(".bullet-block");
       if (target && target.dataset.id !== this.draggedId) {
@@ -837,19 +833,56 @@
     }
   }
 
+  function pointerInteract(node, { onStart, onMove, onEnd }) {
+    let isPointerActive = false;
+
+    const handleDown = (e) => {
+      if (e.button !== 0) return; // Only trigger on left-click
+      isPointerActive = true;
+      node.setPointerCapture(e.pointerId);
+      if (onStart) onStart(e);
+    };
+
+    const handleMove = (e) => {
+      if (!isPointerActive) return;
+      if (onMove) onMove(e);
+    };
+
+    const handleUp = (e) => {
+      if (!isPointerActive) return;
+      isPointerActive = false;
+      node.releasePointerCapture(e.pointerId);
+      if (onEnd) onEnd(e);
+    };
+
+    node.addEventListener('pointerdown', handleDown);
+    node.addEventListener('pointermove', handleMove);
+    node.addEventListener('pointerup', handleUp);
+    node.addEventListener('pointercancel', handleUp); // Safely handle interruptions
+
+    return {
+      destroy() {
+        node.removeEventListener('pointerdown', handleDown);
+        node.removeEventListener('pointermove', handleMove);
+        node.removeEventListener('pointerup', handleUp);
+        node.removeEventListener('pointercancel', handleUp);
+      }
+    };
+  }
+
   // ==========================================
   // 9. APP INITIALIZATION
   // ==========================================
   onMount(async () => {
     let isDestroyed = false;
-    
+
     const initialize = async () => {
       await StateManager.init();
       if (isDestroyed) return;
       StickerBookManager.render();
       ImageManager.restoreAll();
       EventController.init();
-      
+
       // Wait for DOM to settle, then set initial text
       await tick();
       for (const id in blockTexts) {
@@ -897,14 +930,14 @@
 </style>
 
 <!-- UI -->
-<button 
-  id="sticker-toggle" 
+<button
+  id="sticker-toggle"
   class="fixed top-6 right-6 w-12 h-12 bg-white rounded-full shadow-lg text-2xl z-[60] hover:scale-110 transition-transform flex items-center justify-center border border-zinc-100"
   onclick={() => stickerDrawerOpen = !stickerDrawerOpen}
 >🎒</button>
 
-<div 
-  id="sticker-drawer" 
+<div
+  id="sticker-drawer"
   class="fixed top-0 right-0 w-80 h-screen bg-zinc-50 shadow-2xl z-[50] transform transition-transform duration-300 ease-out border-l border-zinc-200 p-6 overflow-y-auto {stickerDrawerOpen ? 'translate-x-0' : 'translate-x-full'}"
 >
   <h2 class="text-2xl font-bold mb-2 mt-16 text-zinc-800">Stickers 🌟</h2>
@@ -924,7 +957,7 @@
       <div class="col-span-2 text-center text-sm text-zinc-400 mt-4">No stickers saved yet! 😿</div>
     {:else}
       {#each loadedStickers as s (s.id)}
-        <div 
+        <div
           class="sticker-item cursor-pointer group flex items-center justify-center p-2 bg-white rounded-lg shadow-sm border border-zinc-100 hover:shadow-md hover:-translate-y-1 transition-all"
           data-sticker-id={s.id}
           draggable="true"
@@ -939,44 +972,55 @@
   </div>
 </div>
 
-<div 
-  id="app" 
-  class="flex w-full min-h-screen will-change-transform relative items-start {isScrubbing ? '!transition-none' : 'transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]'}" 
+<div
+  id="app"
+  class="flex w-full min-h-screen will-change-transform relative items-start {isScrubbing ? '!transition-none' : 'transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]'}"
   style="transform: translateX(-{currentP * 100}vw)"
 >
   {#each meta.pageOrder as pId, i (pId)}
-    <div 
-      class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden" 
-      data-page-id={pId}
-      bind:this={pageWrappers[pId]}
-      onmousedown={(e) => EventController.handleMouseDown(e)}
-      ondblclick={(e) => EventController.handleDblClick(e)}
-      oncontextmenu={(e) => EventController.handleContextMenu(e)}
-    >
+      <div
+        class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden"
+        data-page-id={pId}
+        bind:this={pageWrappers[pId]}
+        use:pointerInteract={{
+          onStart: (e) => EventController.handleMouseDown(e),
+          onMove: (e) => EventController.handleMouseMove(e),
+          onEnd: (e) => EventController.handleMouseUp(e)
+        }}
+        ondblclick={(e) => EventController.handleDblClick(e)}
+        oncontextmenu={(e) => EventController.handleContextMenu(e)}
+      >
       <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">{i + 1}</div>
-      
+
       <!-- Regions -->
       {#each meta.regions.filter(r => r.surfaceId === pId) as r (r.id)}
-        <div 
+        <div
           class="region-box absolute bg-transparent hover:bg-white/40 border border-transparent hover:border-zinc-200 transition-colors duration-300 rounded-lg flex flex-col layer-paper"
           data-region-id={r.id}
           data-page-id={r.pageId}
           style="left: {r.x}px; top: {r.y}px; width: {r.width}px; height: {r.height}px"
         >
-          <div class="region-header h-5 bg-transparent cursor-grab active:cursor-grabbing rounded-t-lg flex items-center px-2 hover:bg-black/5 transition-colors group"></div>
-          <div class="region-content flex-1 overflow-y-auto py-4 pr-4 pl-10 cursor-text" style="touch-action: pan-y;">
-            <div 
-              class="bujo-list min-h-full" 
+            <div
+              class="region-header h-5 bg-transparent cursor-grab active:cursor-grabbing rounded-t-lg flex items-center px-2 hover:bg-black/5 transition-colors group"
+              use:pointerInteract={{
+                onStart: (e) => EventController.handleMouseDown(e),
+                onMove: (e) => EventController.handleMouseMove(e),
+                onEnd: (e) => EventController.handleMouseUp(e)
+              }}
+            ></div>
+            <div class="region-content flex-1 overflow-y-auto py-4 pr-4 pl-10 cursor-text" style="touch-action: pan-y;">
+            <div
+              class="bujo-list min-h-full"
               data-region-page-id={r.pageId}
               ondragover={(e) => EventController.handleDragOver(e)}
               ondragend={(e) => EventController.handleDragEnd(e)}
             >
               {#if pages[r.pageId]}
                 {#each pages[r.pageId] as b (b.id)}
-                  <div 
-                    class="relative flex items-start mb-2 bullet-block group {blockDraggingId === b.id ? 'dragging' : ''}" 
-                    data-id={b.id} 
-                    bind:this={blockElements[b.id]} 
+                  <div
+                    class="relative flex items-start mb-2 bullet-block group {blockDraggingId === b.id ? 'dragging' : ''}"
+                    data-id={b.id}
+                    bind:this={blockElements[b.id]}
                     style="margin-left: {b.depth * CONFIG.INDENT_PX}px"
                     draggable={blockDraggingId === b.id ? "true" : "false"}
                     ondragstart={(e) => EventController.handleDragStart(e)}
@@ -984,9 +1028,9 @@
                     <div class={Utils.getHandleClasses(CONFIG.CYCLE.includes(b.type))} draggable="false">
                       {CONFIG.CYCLE.includes(b.type) ? CONFIG.BULLETS[b.type] : "::"}
                     </div>
-                    <div 
-                      class={Utils.getBlockClasses(b.type)} 
-                      contenteditable="true" 
+                    <div
+                      class={Utils.getBlockClasses(b.type)}
+                      contenteditable="true"
                       spellcheck="false"
                       bind:this={blockTexts[b.id]}
                       onkeydown={(e) => EventController.handleKeydown(e)}
@@ -1006,7 +1050,7 @@
 
       <!-- Temp Region (while drawing) -->
       {#if isDrawingRegion && tempRegion.surfaceId === pId}
-        <div 
+        <div
           class="absolute border border-zinc-400 bg-white/20 rounded-lg pointer-events-none layer-focus"
           style="left: {tempRegion.x}px; top: {tempRegion.y}px; width: {tempRegion.w}px; height: {tempRegion.h}px"
         ></div>
@@ -1015,22 +1059,28 @@
       <!-- Images -->
       {#each meta.placedImages.filter(img => img.pageId === pId) as img (img.id)}
         {#if loadedImages[img.id]}
-          <img 
-            src={loadedImages[img.id]}
-            class="draggable-image layer-{img.layerBucket || 'sticker'} transition-transform duration-200 {zoomedImgId === img.id ? 'scale-125' : 'scale-100'}"            data-img-id={img.id}
-            data-page-id={img.pageId}
-            data-locked={img.locked ? "true" : null}
-            alt="placed"
-            style="left: {img.left}px; top: {img.top}px; rotate: {img.rotation || 0}deg; opacity: {img.opacity ?? 1}; {imgDragId === img.id ? 'pointer-events: none; z-index: 100; transition: none;' : ''}"
-          />
+            <img
+              src={loadedImages[img.id]}
+              class="draggable-image layer-{img.layerBucket || 'sticker'} transition-transform duration-200 {zoomedImgId === img.id ? 'scale-125' : 'scale-100'}"
+              data-img-id={img.id}
+              data-page-id={img.pageId}
+              data-locked={img.locked ? "true" : null}
+              alt="placed"
+              style="left: {img.left}px; top: {img.top}px; rotate: {img.rotation || 0}deg; opacity: {img.opacity ?? 1}; {imgDragId === img.id ? 'pointer-events: none; z-index: 100; transition: none;' : ''}"
+              use:pointerInteract={{
+                onStart: (e) => EventController.handleMouseDown(e),
+                onMove: (e) => EventController.handleMouseMove(e),
+                onEnd: (e) => EventController.handleMouseUp(e)
+              }}
+            />
         {/if}
       {/each}
     </div>
   {/each}
 </div>
 
-<div 
-  id="page-indicator" 
+<div
+  id="page-indicator"
   class="fixed bottom-2 left-1/2 -translate-x-1/2 flex gap-3 z-50 p-4 cursor-grab active:cursor-grabbing touch-none"
   onpointerdown={(e) => {
     const ind = e.currentTarget;
@@ -1056,21 +1106,21 @@
   }}
 >
   {#each meta.pageOrder as _, i}
-    <span 
-      data-idx={i} 
+    <span
+      data-idx={i}
       class="indicator-dot pointer-events-none h-2 rounded-full transition-all duration-300 {i === currentP ? 'w-6 bg-zinc-800' : 'w-2 bg-zinc-300 hover:bg-zinc-400'}"
     ></span>
   {/each}
 </div>
 
 {#if contextMenuVisible}
-  <div 
-    id="custom-context-menu" 
+  <div
+    id="custom-context-menu"
     class="fixed bg-white border border-zinc-200 shadow-xl rounded-md py-1 z-[100] w-48"
     style="left: {contextMenuX}px; top: {contextMenuY}px"
   >
     {#each contextMenuItems as item}
-      <button 
+      <button
         class="w-full text-left px-3 py-1.5 hover:bg-zinc-100 text-sm {item.danger ? 'text-red-600' : 'text-zinc-800'}"
         onclick={(e) => {
           e.stopPropagation();
