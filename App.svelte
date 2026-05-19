@@ -311,164 +311,68 @@
   // 2. ISOLATED ACTIONS 🏗️
   // ==========================================
 
-  // 🌟 The clean, isolated way to handle dragging!
+  // 🌟 Clean pointer actions!
+  function pointerAction(node, { onDown, onMove, onUp, ignore }) {
+    let active = false;
+    const down = (e) => {
+      if (e.button !== 0 || (ignore && ignore(e))) return;
+      active = true;
+      node.setPointerCapture(e.pointerId);
+      if (onDown) onDown(e);
+    };
+    const move = (e) => { if (active && onMove) onMove(e); };
+    const up = (e) => {
+      if (!active) return;
+      active = false;
+      node.releasePointerCapture(e.pointerId);
+      if (onUp) onUp(e);
+    };
+    const evts = ["pointerdown", "pointermove", "pointerup", "pointercancel"];
+    const handlers = [down, move, up, up];
+    evts.forEach((ev, i) => node.addEventListener(ev, handlers[i]));
+    return { destroy() { evts.forEach((ev, i) => node.removeEventListener(ev, handlers[i])); } };
+  }
+
   function draggableImage(node, imgData) {
-    let isDragging = false;
-    let startX, startY, initialLeft, initialTop;
-
-    const down = (e) => {
-      // Don't drag if locked or it's a right-click
-      if (imgData.locked || e.button !== 0) return;
-
-      isDragging = true;
-      node.setPointerCapture(e.pointerId);
-      startX = e.clientX;
-      startY = e.clientY;
-      initialLeft = imgData.left;
-      initialTop = imgData.top;
-
-      e.preventDefault();
-      e.stopPropagation();
-    };
-
-    const move = (e) => {
-      if (!isDragging) return;
-      // ✨ Modifying imgData directly updates the UI because it's deeply tracked in Svelte 5!
-      imgData.left = initialLeft + (e.clientX - startX);
-      imgData.top = initialTop + (e.clientY - startY);
-    };
-
-    const up = (e) => {
-      if (!isDragging) return;
-      isDragging = false;
-      node.releasePointerCapture(e.pointerId);
-      store.requestSave(); // Trigger a debounce save when they let go! 💾
-    };
-
-    node.addEventListener("pointerdown", down);
-    node.addEventListener("pointermove", move);
-    node.addEventListener("pointerup", up);
-    node.addEventListener("pointercancel", up);
-
-    return {
-      destroy() {
-        node.removeEventListener("pointerdown", down);
-        node.removeEventListener("pointermove", move);
-        node.removeEventListener("pointerup", up);
-        node.removeEventListener("pointercancel", up);
-      },
-    };
+    let sX, sY, iL, iT;
+    return pointerAction(node, {
+      ignore: () => imgData.locked,
+      onDown: (e) => { sX = e.clientX; sY = e.clientY; iL = imgData.left; iT = imgData.top; e.preventDefault(); e.stopPropagation(); },
+      onMove: (e) => { imgData.left = iL + (e.clientX - sX); imgData.top = iT + (e.clientY - sY); },
+      onUp: () => store.requestSave()
+    });
   }
-  // 🌟 Action to handle dragging the region around!
-  // 🌟 Action to handle dragging the region around!
+
   function draggableRegion(node, regionId) {
-    let isDragging = false;
-    let startX, startY, initialX, initialY;
-
-    const down = (e) => {
-      if (e.button !== 0) return; // Only allow left clicks
-
-      // ✨ Grab the live region right as we start!
-      const region = store.meta.regions.find((r) => r.id === regionId);
-      if (!region) return;
-
-      isDragging = true;
-      node.setPointerCapture(e.pointerId);
-      startX = e.clientX;
-      startY = e.clientY;
-      initialX = region.x;
-      initialY = region.y;
-
-      e.preventDefault();
-      e.stopPropagation();
-    };
-
-    const move = (e) => {
-      if (!isDragging) return;
-
-      // ✨ Look up the live proxy every time we move!
-      const region = store.meta.regions.find((r) => r.id === regionId);
-      if (region) {
-        region.x = initialX + (e.clientX - startX);
-        region.y = initialY + (e.clientY - startY);
-      }
-    };
-
-    const up = (e) => {
-      if (!isDragging) return;
-      isDragging = false;
-      node.releasePointerCapture(e.pointerId);
-      store.requestSave(); // 💾 Save when they drop it!
-    };
-
-    node.addEventListener("pointerdown", down);
-    node.addEventListener("pointermove", move);
-    node.addEventListener("pointerup", up);
-    node.addEventListener("pointercancel", up);
-
-    return {
-      destroy() {
-        node.removeEventListener("pointerdown", down);
-        node.removeEventListener("pointermove", move);
-        node.removeEventListener("pointerup", up);
-        node.removeEventListener("pointercancel", up);
+    let sX, sY, iX, iY;
+    return pointerAction(node, {
+      onDown: (e) => {
+        const r = store.meta.regions.find(r => r.id === regionId);
+        if (!r) return;
+        sX = e.clientX; sY = e.clientY; iX = r.x; iY = r.y; e.preventDefault(); e.stopPropagation();
       },
-    };
+      onMove: (e) => {
+        const r = store.meta.regions.find(r => r.id === regionId);
+        if (r) { r.x = iX + (e.clientX - sX); r.y = iY + (e.clientY - sY); }
+      },
+      onUp: () => store.requestSave()
+    });
   }
 
-  // 📐 Action to handle resizing the region!
   function resizableRegion(node, regionId) {
-    let isResizing = false;
-    let startX, startY, initialW, initialH;
-
-    const down = (e) => {
-      if (e.button !== 0) return;
-
-      const region = store.meta.regions.find((r) => r.id === regionId);
-      if (!region) return;
-
-      isResizing = true;
-      node.setPointerCapture(e.pointerId);
-      startX = e.clientX;
-      startY = e.clientY;
-      initialW = region.width;
-      initialH = region.height;
-
-      e.preventDefault();
-      e.stopPropagation();
-    };
-
-    const move = (e) => {
-      if (!isResizing) return;
-
-      // ✨ Look up the live proxy every time we move!
-      const region = store.meta.regions.find((r) => r.id === regionId);
-      if (region) {
-        region.width = Math.max(CONFIG.MIN_REGION_SIZE, initialW + (e.clientX - startX));
-        region.height = Math.max(CONFIG.MIN_REGION_SIZE, initialH + (e.clientY - startY));
-      }
-    };
-
-    const up = (e) => {
-      if (!isResizing) return;
-      isResizing = false;
-      node.releasePointerCapture(e.pointerId);
-      store.requestSave(); // 💾 Save when they finish resizing!
-    };
-
-    node.addEventListener("pointerdown", down);
-    node.addEventListener("pointermove", move);
-    node.addEventListener("pointerup", up);
-    node.addEventListener("pointercancel", up);
-
-    return {
-      destroy() {
-        node.removeEventListener("pointerdown", down);
-        node.removeEventListener("pointermove", move);
-        node.removeEventListener("pointerup", up);
-        node.removeEventListener("pointercancel", up);
+    let sX, sY, iW, iH;
+    return pointerAction(node, {
+      onDown: (e) => {
+        const r = store.meta.regions.find(r => r.id === regionId);
+        if (!r) return;
+        sX = e.clientX; sY = e.clientY; iW = r.width; iH = r.height; e.preventDefault(); e.stopPropagation();
       },
-    };
+      onMove: (e) => {
+        const r = store.meta.regions.find(r => r.id === regionId);
+        if (r) { r.width = Math.max(CONFIG.MIN_REGION_SIZE, iW + (e.clientX - sX)); r.height = Math.max(CONFIG.MIN_REGION_SIZE, iH + (e.clientY - sY)); }
+      },
+      onUp: () => store.requestSave()
+    });
   }
 
   // ==========================================
@@ -711,56 +615,6 @@
     }
   }
 
-  function pointerInteract(node, { onStart, onMove, onEnd }) {
-    let isPointerActive = false;
-
-    const handleDown = (e) => {
-      if (e.button !== 0) return;
-
-      // 🛑 CRITICAL FIX: Don't steal the pointer if clicking on interactive elements!
-      if (
-        e.target.tagName === "TEXTAREA" ||
-        e.target.classList.contains("bullet-text") ||
-        e.target.closest(".region-box") ||
-        e.target.closest(".draggable-image") ||
-        e.target.closest("button") ||
-        e.target.closest("#sticker-drawer") ||
-        e.target.closest("#page-indicator")
-      ) {
-        return;
-      }
-
-      isPointerActive = true;
-      node.setPointerCapture(e.pointerId);
-      if (onStart) onStart(e);
-    };
-
-    const handleMove = (e) => {
-      if (!isPointerActive) return;
-      if (onMove) onMove(e);
-    };
-
-    const handleUp = (e) => {
-      if (!isPointerActive) return;
-      isPointerActive = false;
-      node.releasePointerCapture(e.pointerId);
-      if (onEnd) onEnd(e);
-    };
-
-    node.addEventListener("pointerdown", handleDown);
-    node.addEventListener("pointermove", handleMove);
-    node.addEventListener("pointerup", handleUp);
-    node.addEventListener("pointercancel", handleUp);
-
-    return {
-      destroy() {
-        node.removeEventListener("pointerdown", handleDown);
-        node.removeEventListener("pointermove", handleMove);
-        node.removeEventListener("pointerup", handleUp);
-        node.removeEventListener("pointercancel", handleUp);
-      },
-    };
-  }
   function autoResize(node, text) {
     const resize = () => {
       node.style.height = "auto";
@@ -928,10 +782,11 @@
     <div
       class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden"
       data-page-id={pId}
-      use:pointerInteract={{
-        onStart: (e) => RegionManager.startDrawing(e),
+      use:pointerAction={{
+        ignore: (e) => ["TEXTAREA", "BUTTON"].includes(e.target.tagName) || e.target.classList.contains("bullet-text") || e.target.closest(".region-box") || e.target.closest(".draggable-image") || e.target.closest("#sticker-drawer") || e.target.closest("#page-indicator"),
+        onDown: (e) => RegionManager.startDrawing(e),
         onMove: (e) => RegionManager.draw(e),
-        onEnd: (e) => RegionManager.stopDrawing(e),
+        onUp: (e) => RegionManager.stopDrawing(e),
       }}
       ondblclick={(e) => EventController.handleDblClick(e)}
       oncontextmenu={(e) => EventController.handleContextMenu(e)}
@@ -1103,89 +958,5 @@
 {/if}
 
 <style>
-  :global(body) {
-    overflow-x: hidden;
-    overflow-y: auto;
-    background-color: #fafafa;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  }
-  :global([contenteditable]:empty::before) {
-    content: "\FEFF";
-  }
-
-  .bullet-block {
-    animation: slideIn 0.15s ease-out forwards;
-    cursor: default;
-  }
-  @keyframes slideIn {
-    from {
-      opacity: 0;
-      transform: translateY(-4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  :global(::-webkit-scrollbar) {
-    display: none;
-  }
-  .bullet-handle {
-    cursor: grab;
-    user-select: none;
-  }
-  .bullet-handle:active {
-    cursor: grabbing;
-  }
-  .dragging {
-    opacity: 0.3;
-  }
-  .bullet-text {
-    cursor: text;
-    user-select: text;
-    word-break: break-word;
-    -webkit-hyphens: auto;
-    hyphens: auto;
-  }
-  .region-content::-webkit-scrollbar {
-    display: none;
-  }
-
-  .draggable-image {
-    position: absolute;
-    top: 0;
-    left: 0;
-    cursor: grab;
-    max-width: 300px;
-    filter: drop-shadow(0px 8px 12px rgba(0, 0, 0, 0.15));
-    user-select: none;
-    transition:
-      scale 0.2s ease,
-      rotate 0.2s ease,
-      opacity 0.2s ease;
-  }
-  .draggable-image:active {
-    cursor: grabbing;
-  }
-  .draggable-image[data-locked="true"] {
-    cursor: default;
-  }
-  .draggable-image[data-locked="true"]:active {
-    cursor: default;
-  }
-  :global(.layer-background) {
-    z-index: 10;
-  }
-  :global(.layer-paper) {
-    z-index: 20;
-  }
-  :global(.layer-sticker) {
-    z-index: 30;
-  }
-  :global(.layer-floating) {
-    z-index: 40;
-  }
-  :global(.layer-focus) {
-    z-index: 50;
-  }
+:global(body){overflow-x:hidden;overflow-y:auto;background-color:#fafafa;font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif}:global([contenteditable]:empty::before){content:"\FEFF"}.bullet-block{animation:slideIn 0.15s ease-out forwards;cursor:default}@keyframes slideIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}} :global(::-webkit-scrollbar){display:none}.bullet-handle{cursor:grab;user-select:none}.bullet-handle:active{cursor:grabbing}.dragging{opacity:0.3}.bullet-text{cursor:text;user-select:text;word-break:break-word;-webkit-hyphens:auto;hyphens:auto}.region-content::-webkit-scrollbar{display:none}.draggable-image{position:absolute;top:0;left:0;cursor:grab;max-width:300px;filter:drop-shadow(0px 8px 12px rgba(0, 0, 0, 0.15));user-select:none;transition:scale 0.2s ease, rotate 0.2s ease, opacity 0.2s ease}.draggable-image:active{cursor:grabbing}.draggable-image[data-locked="true"]{cursor:default}.draggable-image[data-locked="true"]:active{cursor:default}:global(.layer-background){z-index:10}:global(.layer-paper){z-index:20}:global(.layer-sticker){z-index:30}:global(.layer-floating){z-index:40}:global(.layer-focus){z-index:50}
 </style>
