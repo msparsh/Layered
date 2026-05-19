@@ -91,7 +91,7 @@
     calcRectOffset:(cX,cY,r)=>({x:cX-r.left,y:cY-r.top}),isInsideRect:(cX,cY,r)=>cX>=r.left&&cX<=r.right&&cY>=r.top&&cY<=r.bottom,isBetweenHorizontally:(cX,r)=>cX>=r.left&&cX<=r.right,
     findWrapperByCoords:(ws,cX)=>ws.find(w=>w&&this.isBetweenHorizontally(cX,w.getBoundingClientRect()))||ws[0],
     getBlockClasses:(t)=>`flex-1 outline-none whitespace-pre-wrap min-h-[1.5rem] bullet-text transition-all duration-300 ${CONFIG.H_STYLES[t]||"text-[1.05rem] leading-relaxed"} ${t==="completed"?"line-through text-zinc-400 opacity-60":["migrated","scheduled"].includes(t)?"italic text-zinc-500":""}`.trim(),
-    getHandleClasses:(isB)=>`absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isB?"opacity-40 text-zinc-500":"opacity-0 text-zinc-300"} group-hover:opacity-100 hover:!text-black font-bold transition-all`,
+    getHandleClasses:(isB)=>`absolute -left-8 top-0.5 w-7 h-7 flex items-center justify-center bullet-handle ${isB?"opacity-100 text-zinc-500":"opacity-0 text-zinc-300"} group-hover:opacity-100 hover:!text-black font-bold transition-all`,
     getNextType:cT=>{const i=CONFIG.CYCLE.indexOf(cT);return i===-1?"task":CONFIG.CYCLE[(i+1)%CONFIG.CYCLE.length];},
     getNextLayer:(cL,d)=>CONFIG.LAYERS[this.clamp(CONFIG.LAYERS.indexOf(cL)+d,0,CONFIG.LAYERS.length-1)],
     getNextOpacity:cO=>CONFIG.OPACITIES[(CONFIG.OPACITIES.indexOf(cO??1)+1)%CONFIG.OPACITIES.length],
