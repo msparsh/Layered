@@ -2,9 +2,6 @@
   import { onMount, tick } from "svelte";
 
   // Svelte state variables
-  let meta = $state({ pageOrder: [], stickers: [], placedImages: [], regions: [] });
-  let pages = $state({});
-  let currentP = $state(0);
   let isScrubbing = $state(false);
   let zoomedImgId = $state(null);
 
@@ -19,13 +16,10 @@
   let isDrawingRegion = $state(false);
   let tempRegion = $state({ x: 0, y: 0, w: 0, h: 0 });
   let regionDragId = $state(null);
-  let imgDragId = $state(null);
   let blockDraggingId = $state(null);
 
-  let pageWrappers = {};
-  let blockElements = {};
-  let textElements = {};
-  let loadedImages = $state({});
+  let activeFocusId = $state(null);
+  let activeCursorOffset = $state(0);
 
   // ==========================================
   // 1. CONSTANTS & CONFIGURATION
@@ -73,6 +67,409 @@
     STICKER_GRID: "sticker-grid",
     CONTEXT_MENU: "custom-context-menu",
   };
+
+  // ==========================================
+  // 2. IN-FILE REACTIVE STORE 🧠
+  // ==========================================
+  class BujoStore {
+    // ✨ Reactive State Properties
+    meta = $state({ pageOrder: [], stickers: [], placedImages: [], regions: [] });
+    pages = $state({});
+    currentP = $state(0);
+    loadedImages = $state({});
+
+    // 🔒 Internal Class Properties (Not reactive in the DOM, just for logic)
+    blockMap = new Map();
+    dirtyPages = new Set();
+    isSaving = false;
+    needsSave = false;
+    saveTimeout = null;
+
+    // ----------------------------------------
+    // 💾 STORAGE & INIT METHODS
+    // ----------------------------------------
+    async init() {
+      const loadedMeta = (await FileSystemAPI.readJson("meta.json")) || {};
+      const m = { version: 4, currentP: 0, pageOrder: [], scrolls: [], stickers: [], placedImages: [], regions: [], lines: [], ...loadedMeta };
+
+      if (m.pageOrder.length === 0) {
+        m.pageOrder.push(`page-${Utils.generateId()}`, `page-${Utils.generateId()}`);
+        await FileSystemAPI.writeJsonAtomic("meta.json", m);
+      }
+
+      this.meta = m;
+      this.currentP = this.meta.currentP || 0;
+
+      await Promise.all(
+        this.meta.regions.map(async (r) => {
+          if (!this.pages[r.pageId]) {
+            this.pages[r.pageId] = (await FileSystemAPI.readJson(`pages/${r.pageId}.json`)) || [this.createBlock()];
+          }
+        }),
+      );
+      this.rebuildIndex();
+    }
+
+    requestSave(forceRender = false) {
+      clearTimeout(this.saveTimeout);
+      this.saveTimeout = setTimeout(() => this.executeSave(forceRender), CONFIG.SAVE_TIMEOUT_MS);
+    }
+
+    async executeSave(forceRender = false) {
+      if (this.isSaving) return (this.needsSave = true);
+
+      this.isSaving = true;
+      this.needsSave = false;
+
+      try {
+        await this.cleanEmptySpreads();
+        this.meta.currentP = this.currentP;
+
+        // 🌟 Snapshot before sending to Electron!
+        const pureMeta = $state.snapshot(this.meta);
+        await FileSystemAPI.writeJsonAtomic("meta.json", pureMeta);
+
+        const pagesToSave = new Set(this.dirtyPages);
+        this.dirtyPages.clear();
+
+        for (const pageId of pagesToSave) {
+          if (this.pages[pageId]) {
+            const purePage = $state.snapshot(this.pages[pageId]);
+            await FileSystemAPI.writeJsonAtomic(`pages/${pageId}.json`, purePage);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to save! 😿", error);
+      } finally {
+        this.isSaving = false;
+        if (this.needsSave) this.executeSave(); // Catch up if a save was requested mid-save
+      }
+    }
+
+    // ----------------------------------------
+    // 📝 STATE MANAGER METHODS (Blocks & Pages)
+    // ----------------------------------------
+    createBlock(text = "", depth = 0, type = "text") {
+      return { id: Utils.generateId(), type, text, depth };
+    }
+
+    rebuildIndex() {
+      this.blockMap.clear();
+      Object.entries(this.pages).forEach(([pageId, pageBlocks]) => {
+        pageBlocks.forEach((block, bIdx) => this.blockMap.set(block.id, { pageId, bIdx, block }));
+      });
+    }
+
+    getBlockCoords(id) {
+      return this.blockMap.get(id) || null;
+    }
+
+    async cleanEmptySpreads() {
+      let changed = false;
+      while (this.meta.pageOrder.length > 1 && this.meta.pageOrder.length - 1 !== this.currentP) {
+        const i = this.meta.pageOrder.length - 1;
+        const pId = this.meta.pageOrder[i];
+
+        const isEmpty = (surfaceId) => !this.meta.placedImages.some((img) => img.pageId === surfaceId) && !this.meta.regions.some((r) => r.surfaceId === surfaceId);
+
+        if (isEmpty(pId)) {
+          delete this.pages[pId];
+          this.meta.pageOrder.splice(i, 1);
+          if (this.meta.scrolls) this.meta.scrolls.splice(i, 1);
+          changed = true;
+        } else break;
+      }
+
+      if (this.currentP >= this.meta.pageOrder.length) {
+        this.currentP = Math.max(0, this.meta.pageOrder.length - 1);
+        changed = true;
+      }
+
+      if (changed) this.rebuildIndex();
+      return changed;
+    }
+
+    async ensureEnoughPages() {
+      if (this.currentP >= this.meta.pageOrder.length) {
+        const newPageId = `page-${Utils.generateId()}`;
+        this.meta.pageOrder.push(newPageId);
+        this.rebuildIndex();
+        await FileSystemAPI.writeJsonAtomic("meta.json", $state.snapshot(this.meta));
+        return true;
+      }
+      return false;
+    }
+
+    updateBlock(id, updates) {
+      const c = this.getBlockCoords(id);
+      if (c) {
+        Object.assign(c.block, updates);
+        this.dirtyPages.add(c.pageId);
+        this.requestSave();
+      }
+    }
+
+    addBlock(newBlock, idAfter) {
+      const c = this.getBlockCoords(idAfter);
+      if (!c) return;
+      this.pages[c.pageId].splice(c.bIdx + 1, 0, newBlock);
+      this.rebuildIndex();
+      this.dirtyPages.add(c.pageId);
+      this.requestSave();
+    }
+
+    removeBlock(id) {
+      const c = this.getBlockCoords(id);
+      if (!c) return;
+      this.pages[c.pageId].splice(c.bIdx, 1);
+      this.rebuildIndex();
+      this.dirtyPages.add(c.pageId);
+      this.requestSave();
+    }
+
+    moveBlockDOM(id, targetId, insertAfter) {
+      const src = this.getBlockCoords(id);
+      const tgt = this.getBlockCoords(targetId);
+      if (!src || !tgt) return;
+
+      const [moved] = this.pages[src.pageId].splice(src.bIdx, 1);
+      const sameArray = src.pageId === tgt.pageId;
+      let iIdx = tgt.bIdx - (sameArray && src.bIdx < tgt.bIdx ? 1 : 0) + (insertAfter ? 1 : 0);
+
+      this.pages[tgt.pageId].splice(iIdx, 0, moved);
+      this.rebuildIndex();
+
+      this.dirtyPages.add(src.pageId);
+      if (!sameArray) this.dirtyPages.add(tgt.pageId);
+      this.requestSave();
+    }
+
+    async changePage(dirOrIdx, isRelative = true) {
+      const nextP = isRelative ? this.currentP + dirOrIdx : dirOrIdx;
+      if (nextP < 0) return;
+      this.currentP = nextP;
+      await this.ensureEnoughPages();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      await this.executeSave();
+    }
+
+    // ----------------------------------------
+    // 🖼️ IMAGE MANAGER METHODS
+    // ----------------------------------------
+    async spawnImage(src, clientX, clientY) {
+      const id = Utils.generateId();
+      await FileSystemAPI.writeJsonAtomic(`images/${id}.json`, { src });
+
+      let left = 100,
+        top = 100;
+      let pageId = this.meta.pageOrder[this.currentP];
+
+      if (clientX !== undefined && clientY !== undefined) {
+        left = clientX - 50;
+        top = clientY - 50;
+      }
+
+      const imgData = { id, pageId, left, top, layerBucket: "sticker" };
+      this.meta.placedImages.push(imgData);
+      await this.executeSave();
+      this.renderImage(imgData);
+    }
+
+    async renderImage(data) {
+      const file = await FileSystemAPI.readJson(`images/${data.id}.json`);
+      if (file && file.src) {
+        this.loadedImages[data.id] = file.src; // Triggers UI update! 🎉
+      }
+    }
+
+    updateImage(id, updates) {
+      const imgData = this.meta.placedImages.find((i) => i.id === id);
+      if (!imgData) return;
+      Object.assign(imgData, updates);
+      this.requestSave();
+    }
+
+    restoreAllImages() {
+      this.meta.placedImages.forEach((data) => this.renderImage(data));
+    }
+
+    async removeImage(id) {
+      const idx = this.meta.placedImages.findIndex((i) => i.id === id);
+      if (idx !== -1) {
+        this.meta.placedImages.splice(idx, 1);
+        await this.executeSave();
+        delete this.loadedImages[id];
+        FileSystemAPI.trashJson(`images/${id}.json`);
+      }
+    }
+  }
+
+  // 🚀 Instantiate the store globally for the component
+  const store = new BujoStore();
+
+  // ==========================================
+  // 2. ISOLATED ACTIONS 🏗️
+  // ==========================================
+
+  // 🌟 The clean, isolated way to handle dragging!
+  function draggableImage(node, imgData) {
+    let isDragging = false;
+    let startX, startY, initialLeft, initialTop;
+
+    const down = (e) => {
+      // Don't drag if locked or it's a right-click
+      if (imgData.locked || e.button !== 0) return;
+
+      isDragging = true;
+      node.setPointerCapture(e.pointerId);
+      startX = e.clientX;
+      startY = e.clientY;
+      initialLeft = imgData.left;
+      initialTop = imgData.top;
+
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const move = (e) => {
+      if (!isDragging) return;
+      // ✨ Modifying imgData directly updates the UI because it's deeply tracked in Svelte 5!
+      imgData.left = initialLeft + (e.clientX - startX);
+      imgData.top = initialTop + (e.clientY - startY);
+    };
+
+    const up = (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+      node.releasePointerCapture(e.pointerId);
+      store.requestSave(); // Trigger a debounce save when they let go! 💾
+    };
+
+    node.addEventListener("pointerdown", down);
+    node.addEventListener("pointermove", move);
+    node.addEventListener("pointerup", up);
+    node.addEventListener("pointercancel", up);
+
+    return {
+      destroy() {
+        node.removeEventListener("pointerdown", down);
+        node.removeEventListener("pointermove", move);
+        node.removeEventListener("pointerup", up);
+        node.removeEventListener("pointercancel", up);
+      },
+    };
+  }
+  // 🌟 Action to handle dragging the region around!
+  // 🌟 Action to handle dragging the region around!
+  function draggableRegion(node, regionId) {
+    let isDragging = false;
+    let startX, startY, initialX, initialY;
+
+    const down = (e) => {
+      if (e.button !== 0) return; // Only allow left clicks
+
+      // ✨ Grab the live region right as we start!
+      const region = store.meta.regions.find((r) => r.id === regionId);
+      if (!region) return;
+
+      isDragging = true;
+      node.setPointerCapture(e.pointerId);
+      startX = e.clientX;
+      startY = e.clientY;
+      initialX = region.x;
+      initialY = region.y;
+
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const move = (e) => {
+      if (!isDragging) return;
+
+      // ✨ Look up the live proxy every time we move!
+      const region = store.meta.regions.find((r) => r.id === regionId);
+      if (region) {
+        region.x = initialX + (e.clientX - startX);
+        region.y = initialY + (e.clientY - startY);
+      }
+    };
+
+    const up = (e) => {
+      if (!isDragging) return;
+      isDragging = false;
+      node.releasePointerCapture(e.pointerId);
+      store.requestSave(); // 💾 Save when they drop it!
+    };
+
+    node.addEventListener("pointerdown", down);
+    node.addEventListener("pointermove", move);
+    node.addEventListener("pointerup", up);
+    node.addEventListener("pointercancel", up);
+
+    return {
+      destroy() {
+        node.removeEventListener("pointerdown", down);
+        node.removeEventListener("pointermove", move);
+        node.removeEventListener("pointerup", up);
+        node.removeEventListener("pointercancel", up);
+      },
+    };
+  }
+
+  // 📐 Action to handle resizing the region!
+  function resizableRegion(node, regionId) {
+    let isResizing = false;
+    let startX, startY, initialW, initialH;
+
+    const down = (e) => {
+      if (e.button !== 0) return;
+
+      const region = store.meta.regions.find((r) => r.id === regionId);
+      if (!region) return;
+
+      isResizing = true;
+      node.setPointerCapture(e.pointerId);
+      startX = e.clientX;
+      startY = e.clientY;
+      initialW = region.width;
+      initialH = region.height;
+
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const move = (e) => {
+      if (!isResizing) return;
+
+      // ✨ Look up the live proxy every time we move!
+      const region = store.meta.regions.find((r) => r.id === regionId);
+      if (region) {
+        region.width = Math.max(CONFIG.MIN_REGION_SIZE, initialW + (e.clientX - startX));
+        region.height = Math.max(CONFIG.MIN_REGION_SIZE, initialH + (e.clientY - startY));
+      }
+    };
+
+    const up = (e) => {
+      if (!isResizing) return;
+      isResizing = false;
+      node.releasePointerCapture(e.pointerId);
+      store.requestSave(); // 💾 Save when they finish resizing!
+    };
+
+    node.addEventListener("pointerdown", down);
+    node.addEventListener("pointermove", move);
+    node.addEventListener("pointerup", up);
+    node.addEventListener("pointercancel", up);
+
+    return {
+      destroy() {
+        node.removeEventListener("pointerdown", down);
+        node.removeEventListener("pointermove", move);
+        node.removeEventListener("pointerup", up);
+        node.removeEventListener("pointercancel", up);
+      },
+    };
+  }
 
   // ==========================================
   // 3. PURE FUNCTIONS / HELPERS
@@ -123,222 +520,37 @@
     trashJson: async (path) => (api ? await api.trashJson(path) : memFs.delete(path)),
   };
 
-  const StorageManager = {
-    saveTimeout: null,
-    isSaving: false,
-    needsSave: false,
-    dirtyPages: new Set(),
-    async loadNotebookMeta() {
-      const m = (await FileSystemAPI.readJson("meta.json")) || {};
-      return { version: 4, currentP: 0, pageOrder: [], scrolls: [], stickers: [], placedImages: [], regions: [], lines: [], ...m };
-    },
-    async executeSave(forceRender = false) {
-      if (this.isSaving) return (this.needsSave = true);
-      this.isSaving = true;
-      this.needsSave = false;
-
-      try {
-        await StateManager.cleanEmptySpreads();
-        meta.currentP = currentP;
-
-        // 🌟 FIX: Unwrap the proxy before sending to Electron!
-        const pureMeta = $state.snapshot(meta);
-        await FileSystemAPI.writeJsonAtomic("meta.json", pureMeta);
-
-        const pagesToSave = new Set(this.dirtyPages);
-        this.dirtyPages.clear();
-
-        for (const pageId of pagesToSave) {
-          if (pages[pageId]) {
-            // 🌟 FIX: Unwrap the page data proxy!
-            const purePage = $state.snapshot(pages[pageId]);
-            await FileSystemAPI.writeJsonAtomic(`pages/${pageId}.json`, purePage);
-          }
-        }
-      } catch (error) {
-        console.error("Failed to save! 😿", error);
-      } finally {
-        this.isSaving = false;
-        // If a save was requested WHILE we were saving, trigger it again
-        if (this.needsSave) this.executeSave();
-      }
-    },
-
-    requestSave(forceRender = false) {
-      clearTimeout(this.saveTimeout);
-      // 500ms debounce buffer ⏱️
-      this.saveTimeout = setTimeout(() => this.executeSave(forceRender), CONFIG.SAVE_TIMEOUT_MS);
-    },
-  };
-
   // ==========================================
   // 5. STATE MANAGEMENT
   // ==========================================
-  const StateManager = {
-    blockMap: new Map(),
-
-    createBlock: (text = "", depth = 0, type = "text") => ({ id: Utils.generateId(), type, text, depth }),
-
-    async init() {
-      const loadedMeta = await StorageManager.loadNotebookMeta();
-      if (loadedMeta.pageOrder.length === 0) {
-        loadedMeta.pageOrder.push(`page-${Utils.generateId()}`, `page-${Utils.generateId()}`);
-        await FileSystemAPI.writeJsonAtomic("meta.json", loadedMeta);
-      }
-
-      meta = loadedMeta;
-      pages = {};
-
-      await Promise.all(
-        meta.regions.map(async (r) => {
-          if (!pages[r.pageId]) {
-            pages[r.pageId] = (await FileSystemAPI.readJson(`pages/${r.pageId}.json`)) || [this.createBlock()];
-          }
-        }),
-      );
-
-      currentP = meta.currentP || 0;
-      this.rebuildIndex();
-    },
-
-    rebuildIndex() {
-      this.blockMap.clear();
-      Object.entries(pages).forEach(([pageId, pageBlocks]) => {
-        pageBlocks.forEach((block, bIdx) => this.blockMap.set(block.id, { pageId, bIdx, block }));
-      });
-    },
-
-    getBlockCoords: (id) => StateManager.blockMap.get(id) || null,
-
-    async cleanEmptySpreads() {
-      let changed = false;
-      while (meta.pageOrder.length > 1 && meta.pageOrder.length - 1 !== currentP) {
-        const i = meta.pageOrder.length - 1;
-        const pId = meta.pageOrder[i];
-
-        const isEmpty = (surfaceId) => !meta.placedImages.some((img) => img.pageId === surfaceId) && !meta.regions.some((r) => r.surfaceId === surfaceId);
-
-        if (isEmpty(pId)) {
-          delete pages[pId];
-          meta.pageOrder.splice(i, 1);
-          meta.scrolls.splice(i, 1);
-          changed = true;
-        } else break;
-      }
-      if (currentP >= meta.pageOrder.length) {
-        currentP = Math.max(0, meta.pageOrder.length - 1);
-        changed = true;
-      }
-      if (changed) this.rebuildIndex();
-      return changed;
-    },
-
-    async ensureEnoughPages() {
-      if (currentP >= meta.pageOrder.length) {
-        const newPageId = `page-${Utils.generateId()}`;
-        meta.pageOrder.push(newPageId);
-        this.rebuildIndex();
-        await FileSystemAPI.writeJsonAtomic("meta.json", meta);
-        return true;
-      }
-      return false;
-    },
-
-    async updateBlock(id, updates) {
-      const c = this.getBlockCoords(id);
-      if (c) {
-        Object.assign(c.block, updates);
-        StorageManager.dirtyPages.add(c.pageId);
-        StorageManager.requestSave();
-        // ✂️ REMOVED the manual blockTexts[id].innerText check! Svelte handles this.
-      }
-    },
-
-    async addBlock(newBlock, idAfter) {
-      const c = this.getBlockCoords(idAfter);
-      if (!c) return;
-      const { pageId, bIdx } = c;
-      pages[pageId].splice(bIdx + 1, 0, newBlock);
-      this.rebuildIndex();
-      StorageManager.dirtyPages.add(pageId);
-      StorageManager.requestSave();
-    },
-
-    async removeBlock(id) {
-      const c = this.getBlockCoords(id);
-      if (!c) return;
-      const { pageId, bIdx } = c;
-      pages[pageId].splice(bIdx, 1);
-      this.rebuildIndex();
-      StorageManager.dirtyPages.add(pageId);
-      StorageManager.requestSave();
-    },
-
-    async moveBlockDOM(id, targetId, insertAfter) {
-      const src = this.getBlockCoords(id),
-        tgt = this.getBlockCoords(targetId);
-      if (!src || !tgt) return;
-
-      const srcArray = pages[src.pageId];
-      const tgtArray = pages[tgt.pageId];
-
-      const [moved] = srcArray.splice(src.bIdx, 1);
-      const sameArray = src.pageId === tgt.pageId;
-      let iIdx = tgt.bIdx - (sameArray && src.bIdx < tgt.bIdx ? 1 : 0) + (insertAfter ? 1 : 0);
-
-      tgtArray.splice(iIdx, 0, moved);
-      this.rebuildIndex();
-
-      StorageManager.dirtyPages.add(src.pageId);
-      if (!sameArray) StorageManager.dirtyPages.add(tgt.pageId);
-      StorageManager.requestSave();
-    },
-
-    async changePage(dirOrIdx, isRelative = true) {
-      const nextP = isRelative ? currentP + dirOrIdx : dirOrIdx;
-      if (nextP < 0) return;
-      currentP = nextP;
-      await this.ensureEnoughPages();
-      window.scrollTo({ top: 0, behavior: "smooth" });
-      await StorageManager.executeSave();
-    },
-  };
 
   // ==========================================
   // CORE MANAGERS (Listening to Events)
   // ==========================================
-  const CursorEngine = {
-    async focus(id, offset = 0, atEnd = false) {
-      await tick();
 
-      const el = textElements[id]; // 👈 CHANGE THIS TO textElements! 🎯
-      if (!el) return;
-
-      el.focus();
-      const targetPos = atEnd ? el.value.length : offset;
-      el.setSelectionRange(targetPos, targetPos);
-    },
-  };
+  // ==========================================
+  // 5. CORE MANAGERS (Updated for BujoStore!) 🚀
+  // ==========================================
 
   const StickerBookManager = {
     async saveSticker(base64Src) {
       const id = Utils.generateId();
       await FileSystemAPI.writeJsonAtomic(`images/sticker-${id}.json`, { src: base64Src });
-      meta.stickers.push(id);
-      await StorageManager.executeSave();
+      store.meta.stickers.push(id); // ✨ Now uses store
+      await store.executeSave();
       this.render();
     },
     async removeSticker(id) {
-      const idx = meta.stickers.indexOf(id);
+      const idx = store.meta.stickers.indexOf(id);
       if (idx !== -1) {
-        meta.stickers.splice(idx, 1);
-        await StorageManager.executeSave();
+        store.meta.stickers.splice(idx, 1); // ✨ Now uses store
+        await store.executeSave();
         this.render();
         await FileSystemAPI.trashJson(`images/sticker-${id}.json`);
       }
     },
     async render() {
-      const promises = meta.stickers.map(async (id) => {
+      const promises = store.meta.stickers.map(async (id) => {
         const file = await FileSystemAPI.readJson(`images/sticker-${id}.json`);
         return file ? { id, src: file.src } : null;
       });
@@ -346,65 +558,14 @@
     },
   };
 
-  const ImageManager = {
-    async spawn(src, clientX, clientY) {
-      const id = Utils.generateId();
-      await FileSystemAPI.writeJsonAtomic(`images/${id}.json`, { src });
-
-      let left = 100,
-        top = 100;
-      let pageId = meta.pageOrder[currentP];
-      if (clientX !== undefined && clientY !== undefined) {
-        left = clientX - 50;
-        top = clientY - 50;
-      }
-
-      const imgData = { id, pageId, left, top, layerBucket: "sticker" };
-      meta.placedImages.push(imgData);
-      await StorageManager.executeSave();
-      this.renderImage(imgData);
-    },
-    async renderImage(data) {
-      const file = await FileSystemAPI.readJson(`images/${data.id}.json`);
-      if (file && file.src) {
-        loadedImages[data.id] = file.src;
-      }
-    },
-    async updateImage(id, updates) {
-      const imgData = meta.placedImages.find((i) => i.id === id);
-      if (!imgData) return;
-      Object.assign(imgData, updates);
-      StorageManager.requestSave();
-    },
-    restoreAll() {
-      meta.placedImages.forEach((data) => this.renderImage(data));
-    },
-    async removeImage(id) {
-      const idx = meta.placedImages.findIndex((i) => i.id === id);
-      if (idx !== -1) {
-        meta.placedImages.splice(idx, 1);
-        await StorageManager.executeSave();
-        delete loadedImages[id];
-        FileSystemAPI.trashJson(`images/${id}.json`);
-      }
-    },
-  };
-
   const RegionManager = {
     startX: 0,
     startY: 0,
     surfaceId: null,
+
     startDrawing(e) {
       const wrapper = e.target.closest(".page-wrapper");
-      if (
-        !wrapper ||
-        e.target.closest(".region-box") ||
-        e.target.closest(".draggable-image") ||
-        e.target.closest("button") ||
-        e.target.closest("#sticker-drawer") ||
-        e.target.closest("#page-indicator")
-      )
-        return;
+      if (!wrapper) return;
 
       isDrawingRegion = true;
       this.surfaceId = wrapper.dataset.pageId;
@@ -412,62 +573,68 @@
       this.startX = offset.x;
       this.startY = offset.y;
 
+      // ✨ Force Svelte 5 reactivity with a fresh object!
       tempRegion = { x: this.startX, y: this.startY, w: 0, h: 0, surfaceId: this.surfaceId };
     },
+
     draw(e) {
       if (!isDrawingRegion) return;
-      const wrapper = pageWrappers[this.surfaceId];
+      const wrapper = Array.from(Utils.qsa(".page-wrapper")).find((w) => w.dataset.pageId === this.surfaceId);
       if (!wrapper) return;
 
       const offset = Utils.calcRectOffset(e.clientX, e.clientY, wrapper.getBoundingClientRect());
-      tempRegion.x = Math.min(this.startX, offset.x);
-      tempRegion.y = Math.min(this.startY, offset.y);
-      tempRegion.w = Math.abs(offset.x - this.startX);
-      tempRegion.h = Math.abs(offset.y - this.startY);
+
+      // ✨ Force UI update by reassigning instead of mutating!
+      tempRegion = {
+        ...tempRegion,
+        x: Math.min(this.startX, offset.x),
+        y: Math.min(this.startY, offset.y),
+        w: Math.abs(offset.x - this.startX),
+        h: Math.abs(offset.y - this.startY),
+      };
     },
+
     async stopDrawing(e) {
       if (!isDrawingRegion) return;
       isDrawingRegion = false;
 
       if (tempRegion.w > CONFIG.MIN_REGION_SIZE && tempRegion.h > CONFIG.MIN_REGION_SIZE) {
-        const regionId = Utils.generateId(),
-          pageId = `page-${Utils.generateId()}`;
+        const regionId = Utils.generateId();
+        const pageId = `page-${Utils.generateId()}`;
         const region = { id: regionId, surfaceId: this.surfaceId, x: tempRegion.x, y: tempRegion.y, width: tempRegion.w, height: tempRegion.h, pageId };
 
-        meta.regions.push(region);
-        pages[pageId] = [StateManager.createBlock()];
-        StateManager.rebuildIndex();
-        StorageManager.dirtyPages.add(pageId);
-        await StorageManager.executeSave();
+        // ✨ Bulletproof Array Update (Forces UI to render the new region)
+        store.meta.regions = [...store.meta.regions, region];
 
-        CursorEngine.focus(pages[pageId][0].id);
+        const newBlock = store.createBlock();
+
+        // ✨ Bulletproof Object Update
+        store.pages = { ...store.pages, [pageId]: [newBlock] };
+
+        store.rebuildIndex();
+        store.dirtyPages.add(pageId);
+        await store.executeSave();
+
+        activeFocusId = newBlock.id;
+        activeCursorOffset = 0;
       }
     },
   };
-
   const EditorEngine = {
     setBlockType(id, type) {
-      StateManager.updateBlock(id, { type });
-    },
+      store.updateBlock(id, { type });
+    }, // ✨ Now uses store
     indentBlock(id, dir) {
-      const c = StateManager.getBlockCoords(id);
-      if (c) StateManager.updateBlock(id, { depth: Utils.clamp(c.block.depth + dir, 0, CONFIG.MAX_DEPTH) });
+      const c = store.getBlockCoords(id);
+      if (c) store.updateBlock(id, { depth: Utils.clamp(c.block.depth + dir, 0, CONFIG.MAX_DEPTH) });
     },
-
-    updateText(id) {
-      const coords = StateManager.getBlockCoords(id);
+    updateText(id, currentText) {
+      const coords = store.getBlockCoords(id);
       if (!coords) return;
-
-      // Svelte's bind:innerText has already updated the raw state
-      const currentText = coords.block.text;
-      const currentType = coords.block.type;
-
-      // 🐛 FIX 1: Normalize browser's non-breaking spaces (\u00A0) back to standard spaces
       let processedText = currentText.replace(/\u00A0/g, " ");
-      let newType = currentType;
+      let newType = coords.block.type;
       let isMarkdownTriggered = false;
 
-      // Check for markdown shortcuts
       for (const [prefix, t] of Object.entries(CONFIG.MD_MAP)) {
         if (processedText.startsWith(prefix)) {
           newType = t;
@@ -478,386 +645,68 @@
       }
 
       if (isMarkdownTriggered) {
-        // Strip the prefix and change the block type
-        StateManager.updateBlock(id, { text: processedText, type: newType });
-
-        // 🐛 FIX 2: Wait for Svelte to apply the new text/classes, then snap the cursor to the beginning
-        CursorEngine.focus(id, 0, false);
+        store.updateBlock(id, { text: processedText, type: newType });
+        activeFocusId = id; // 🎯 Fixed reference error!
+        activeCursorOffset = 0;
       } else {
-        // Standard typing: Just hit the update method to trigger the auto-save mechanism! 💾
-        StateManager.updateBlock(id, { text: currentText });
+        store.updateBlock(id, { text: currentText });
       }
     },
-
     cycleType(id) {
-      const c = StateManager.getBlockCoords(id);
+      const c = store.getBlockCoords(id);
       if (c) this.setBlockType(id, Utils.getNextType(c.block.type));
     },
     splitBlock(id, caretPos) {
-      const c = StateManager.getBlockCoords(id);
+      const c = store.getBlockCoords(id);
       if (!c) return;
       const { block } = c;
       const newType = block.type.startsWith("h") ? "text" : block.type;
-      const newBlock = StateManager.createBlock(block.text.slice(caretPos), block.depth, newType);
+      const newBlock = store.createBlock(block.text.slice(caretPos), block.depth, newType);
 
-      StateManager.updateBlock(id, { text: block.text.slice(0, caretPos) });
-      StateManager.addBlock(newBlock, id);
-      CursorEngine.focus(newBlock.id);
+      store.updateBlock(id, { text: block.text.slice(0, caretPos) });
+      store.addBlock(newBlock, id);
+      activeFocusId = newBlock.id; // 🎯 Fixed reference error!
+      activeCursorOffset = 0;
     },
     mergeWithPrevious(id) {
-      const c = StateManager.getBlockCoords(id);
+      const c = store.getBlockCoords(id);
       if (!c || c.bIdx === 0) return;
 
-      const prev = pages[c.pageId][c.bIdx - 1];
-
-      // 🐛 FIX 1: Capture the exact length BEFORE mutating the state!
+      const prev = store.pages[c.pageId][c.bIdx - 1]; // ✨ Now uses store
       const mergePoint = prev.text.length;
       const merged = prev.text + c.block.text;
 
-      StateManager.updateBlock(prev.id, { text: merged });
-      StateManager.removeBlock(id);
-
-      // Pass the saved mergePoint, not the new length
-      CursorEngine.focus(prev.id, mergePoint);
+      store.updateBlock(prev.id, { text: merged });
+      store.removeBlock(id);
+      activeFocusId = prev.id; // 🎯 Fixed reference error!
+      activeCursorOffset = mergePoint;
     },
     navigateVertical(id, dir) {
-      const el = blockElements[id];
-      if (!el) return;
-      const target = dir === -1 ? el.previousElementSibling : el.nextElementSibling;
-      if (target) CursorEngine.focus(target.dataset.id, 0, dir === -1);
+      const c = store.getBlockCoords(id);
+      if (!c) return;
+      const targetBlock = store.pages[c.pageId][c.bIdx + dir]; // ✨ Now uses store
+      if (targetBlock) {
+        activeFocusId = targetBlock.id; // 🎯 Fixed reference error!
+        activeCursorOffset = 0;
+      }
     },
   };
 
   // ==========================================
   // 8. EVENT CONTROLLER
   // ==========================================
-  const EventController = {
-    imgDrag: { id: null, offsetX: 0, offsetY: 0 },
-    regionDrag: { id: null, type: null, offsetX: 0, offsetY: 0, startX: 0, startY: 0, startW: 0, startH: 0 },
-    draggedId: null,
-    ticking: false,
-
-    init() {
-      // Global events we must bind manually
-      this.boundPaste = this.handlePaste.bind(this);
-      this.boundDrop = this.handleDrop.bind(this);
-      this.boundClick = () => (contextMenuVisible = false);
-      this.boundContextMenu = () => (contextMenuVisible = false);
-
-      window.addEventListener("mousemove", this.boundMouseMove);
-      window.addEventListener("mouseup", this.boundMouseUp);
-      document.addEventListener("paste", this.boundPaste);
-      document.addEventListener("drop", this.boundDrop);
-
-      // Global unhandled clicks close context menu
-      document.addEventListener("click", this.boundClick);
-      document.addEventListener("contextmenu", this.boundContextMenu);
-    },
-
-    destroy() {
-      document.removeEventListener("paste", this.boundPaste);
-      document.removeEventListener("drop", this.boundDrop);
-      document.removeEventListener("click", this.boundClick);
-      document.removeEventListener("contextmenu", this.boundContextMenu);
-    },
-
-    handleMouseDown(e) {
-      if (e.button !== 0) return;
-
-      const handle = e.target.closest(".bullet-handle");
-      if (handle) {
-        const block = handle.closest(".bullet-block");
-        blockDraggingId = block.dataset.id;
-        const clean = () => {
-          blockDraggingId = null;
-          document.removeEventListener("mouseup", clean);
-          handle.removeEventListener("mouseleave", clean);
-        };
-        document.addEventListener("mouseup", clean);
-        handle.addEventListener("mouseleave", clean);
-        return;
-      }
-
-      const img = e.target.closest(".draggable-image");
-      if (img && img.dataset.locked !== "true") {
-        const wrapper = img.closest(".page-wrapper");
-        const wrapperRect = wrapper.getBoundingClientRect();
-        const imgData = meta.placedImages.find((i) => i.id === img.dataset.imgId);
-        if (!imgData) return;
-        const imgLeft = imgData.left || 0;
-        const imgTop = imgData.top || 0;
-
-        const offsetX = e.clientX - wrapperRect.left - imgLeft;
-        const offsetY = e.clientY - wrapperRect.top - imgTop;
-
-        imgDragId = img.dataset.imgId;
-        this.imgDrag = { id: imgDragId, offsetX, offsetY };
-        return (e.preventDefault(), e.stopPropagation());
-      }
-
-      const resizer = e.target.closest(".region-resizer");
-      if (resizer) {
-        const rb = resizer.closest(".region-box");
-        regionDragId = rb.dataset.regionId;
-        this.regionDrag = { id: regionDragId, type: "resize", startX: e.clientX, startY: e.clientY, startW: rb.offsetWidth, startH: rb.offsetHeight };
-        return (e.preventDefault(), e.stopPropagation());
-      }
-      const header = e.target.closest(".region-header");
-      if (header) {
-        const rb = header.closest(".region-box");
-        const offset = Utils.calcRectOffset(e.clientX, e.clientY, rb.getBoundingClientRect());
-        regionDragId = rb.dataset.regionId;
-        this.regionDrag = { id: regionDragId, type: "move", offsetX: offset.x, offsetY: offset.y };
-        return (e.preventDefault(), e.stopPropagation());
-      }
-
-      RegionManager.startDrawing(e);
-    },
-
-    async handleMouseMove(e) {
-      if (this.ticking) return;
-      this.ticking = true;
-
-      requestAnimationFrame(async () => {
-        if (this.imgDrag.id) {
-          const pageId = meta.pageOrder[currentP];
-          const offsetX = e.clientX - this.imgDrag.offsetX;
-          const offsetY = e.clientY - this.imgDrag.offsetY;
-          ImageManager.updateImage(this.imgDrag.id, { pageId, left: offsetX, top: offsetY });
-        } else if (this.regionDrag.id) {
-          const rData = meta.regions.find((r) => r.id === this.regionDrag.id);
-          if (rData) {
-            const pageId = meta.pageOrder[currentP];
-            const offsetX = e.clientX - this.regionDrag.offsetX;
-            const offsetY = e.clientY - this.regionDrag.offsetY;
-            rData.surfaceId = pageId;
-            rData.x = offsetX;
-            rData.y = offsetY;
-            StorageManager.requestSave();
-          }
-        } else {
-          RegionManager.draw(e);
-        }
-        this.ticking = false;
-      });
-    },
-
-    async handleMouseUp(e) {
-      if (this.imgDrag.id) {
-        imgDragId = null;
-        this.imgDrag.id = null;
-        await StorageManager.executeSave();
-      } else if (this.regionDrag.id) {
-        regionDragId = null;
-        this.regionDrag.id = null;
-        await StorageManager.executeSave();
-      } else {
-        RegionManager.stopDrawing(e);
-      }
-    },
-
-    handleKeydown(e) {
-      const k = e.key,
-        alt = e.altKey,
-        ctrl = e.ctrlKey,
-        shift = e.shiftKey;
-      if (!e.target.classList.contains("bullet-text")) {
-        if (k === "ArrowLeft" || k === "ArrowRight") {
-          e.preventDefault();
-          StateManager.changePage(k === "ArrowLeft" ? -1 : 1).catch(console.error);
-        }
-        return;
-      }
-      if (k === "Escape") return (e.preventDefault(), e.target.blur());
-      const bId = e.target.dataset.id; // Or however you grab the ID
-      const cPos = e.target.selectionStart;
-
-      if (alt && k === "ArrowLeft") return (e.preventDefault(), StateManager.changePage(-1));
-      if (alt && (k === "ArrowRight" || k === "Enter")) return (e.preventDefault(), StateManager.changePage(1));
-      if (ctrl && k === "Enter") return (e.preventDefault(), EditorEngine.cycleType(bId));
-      if (k === "Enter" && !shift) {
-        e.preventDefault();
-        EditorEngine.splitBlock(bId, cPos);
-      }
-      if (k === "Tab") return (e.preventDefault(), EditorEngine.indentBlock(bId, shift ? -1 : 1));
-      if (k === "Backspace" && cPos === 0) {
-        e.preventDefault();
-        const c = StateManager.getBlockCoords(bId);
-        if (c.block.type !== "text") {
-          EditorEngine.setBlockType(bId, "text");
-          CursorEngine.focus(bId, 0);
-        } else if (c.bIdx > 0) {
-          EditorEngine.mergeWithPrevious(bId);
-        }
-      }
-      if (k === "ArrowUp" || k === "ArrowDown") {
-        const sel = window.getSelection();
-        if (!sel.rangeCount) return;
-        const r = sel.getRangeAt(0).getBoundingClientRect(),
-          elR = e.target.getBoundingClientRect();
-        if (k === "ArrowUp" && r.top - elR.top < CONFIG.KEY_JUMP_THRESHOLD) return (e.preventDefault(), EditorEngine.navigateVertical(bId, -1));
-        if (k === "ArrowDown" && elR.bottom - r.bottom < CONFIG.KEY_JUMP_THRESHOLD) return (e.preventDefault(), EditorEngine.navigateVertical(bId, 1));
-      }
-    },
-
-    handlePaste(e) {
-      const items = e.clipboardData?.items;
-      let imagePasted = false;
-      if (items) {
-        for (let item of items) {
-          if (item.type.startsWith("image/")) {
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-              if (stickerDrawerOpen || e.target?.closest("#sticker-drawer")) StickerBookManager.saveSticker(ev.target.result);
-              else ImageManager.spawn(ev.target.result);
-            };
-            reader.readAsDataURL(item.getAsFile());
-            imagePasted = true;
-          }
-        }
-      }
-      if (imagePasted) return e.preventDefault();
-    },
-
-    handleDrop(e) {
-      try {
-        const data = JSON.parse(e.dataTransfer.getData("application/json"));
-        if (data?.type === "sticker") return (e.preventDefault(), ImageManager.spawn(data.src, e.clientX, e.clientY));
-      } catch {}
-      if (e.dataTransfer.files?.length) {
-        let hasImg = false;
-        for (let f of e.dataTransfer.files) {
-          if (f.type.startsWith("image/")) {
-            hasImg = true;
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-              if (stickerDrawerOpen || e.target?.closest("#sticker-drawer")) StickerBookManager.saveSticker(ev.target.result);
-              else ImageManager.spawn(ev.target.result, e.clientX, e.clientY);
-            };
-            reader.readAsDataURL(f);
-          }
-        }
-        if (hasImg) e.preventDefault();
-      }
-    },
-
-    handleContextMenu(e) {
-      const regionHeader = e.target.closest(".region-header");
-      const img = e.target.closest(".draggable-image");
-      const sticker = e.target.closest(".sticker-item");
-
-      if (regionHeader) {
-        e.preventDefault();
-        e.stopPropagation();
-        const id = regionHeader.closest(".region-box").dataset.regionId;
-        contextMenuX = e.clientX;
-        contextMenuY = e.clientY;
-        contextMenuItems = [
-          {
-            label: "🗑️ Delete Region",
-            danger: true,
-            action: async () => {
-              const idx = meta.regions.findIndex((r) => r.id === id);
-              if (idx !== -1) {
-                const r = meta.regions.splice(idx, 1)[0];
-                delete pages[r.pageId];
-                FileSystemAPI.trashJson(`pages/${r.pageId}.json`);
-                StateManager.rebuildIndex();
-                await StorageManager.executeSave();
-              }
-            },
-          },
-        ];
-        contextMenuVisible = true;
-      } else if (img) {
-        e.preventDefault();
-        e.stopPropagation();
-        const id = img.dataset.imgId;
-        const data = meta.placedImages.find((i) => i.id === id);
-        if (!data) return;
-        contextMenuX = e.clientX;
-        contextMenuY = e.clientY;
-        contextMenuItems = [
-          { label: data.locked ? "🔓 Unlock Position" : "🔒 Lock Position", action: () => ImageManager.updateImage(id, { locked: !data.locked }) },
-          { label: "🔄 Rotate 45°", action: () => ImageManager.updateImage(id, { rotation: ((data.rotation || 0) + 45) % 360 }) },
-          { label: "🔼 Bring Forward", action: () => ImageManager.updateImage(id, { layerBucket: Utils.getNextLayer(data.layerBucket || "sticker", 1) }) },
-          { label: "🔽 Send Backward", action: () => ImageManager.updateImage(id, { layerBucket: Utils.getNextLayer(data.layerBucket || "sticker", -1) }) },
-          { label: "👻 Change Opacity", action: () => ImageManager.updateImage(id, { opacity: Utils.getNextOpacity(data.opacity) }) },
-          { label: "🗑️ Delete Image", danger: true, action: () => ImageManager.removeImage(id) },
-        ];
-        contextMenuVisible = true;
-      } else if (sticker) {
-        e.preventDefault();
-        e.stopPropagation();
-        const id = sticker.dataset.stickerId;
-        contextMenuX = e.clientX;
-        contextMenuY = e.clientY;
-        contextMenuItems = [{ label: "🗑️ Delete Sticker", danger: true, action: () => StickerBookManager.removeSticker(id) }];
-        contextMenuVisible = true;
-      }
-    },
-
-    async handleDblClick(e) {
-      const imgEl = e.target.closest(".draggable-image");
-      if (imgEl) {
-        const id = imgEl.dataset.imgId;
-        const file = await FileSystemAPI.readJson(`images/${id}.json`);
-        if (file) StickerBookManager.saveSticker(file.src);
-
-        zoomedImgId = id; // Trigger zoom!
-        setTimeout(() => (zoomedImgId = null), 200); // Revert zoom!
-      }
-    },
-
-    handleDragStart(e) {
-      const block = e.target.closest(".bullet-block");
-      if (block?.getAttribute("draggable") === "true") {
-        this.draggedId = block.dataset.id;
-        blockDraggingId = this.draggedId;
-      } else if (e.target.closest(".sticker-item")) {
-        return;
-      } else {
-        e.preventDefault();
-      }
-    },
-
-    handleDragOver(e) {
-      e.preventDefault();
-      if (!this.draggedId) return;
-
-      const target = e.target.closest(".bullet-block");
-      if (target && target.dataset.id !== this.draggedId) {
-        const rect = target.getBoundingClientRect(),
-          el = blockElements[this.draggedId];
-        target.parentNode.insertBefore(el, e.clientY > rect.top + rect.height / 2 ? target.nextSibling : target);
-      }
-    },
-
-    handleDragEnd() {
-      const el = blockElements[this.draggedId];
-      if (el) {
-        const prev = el.previousElementSibling,
-          next = el.nextElementSibling,
-          list = el.closest(".bujo-list");
-        if (list) prev ? StateManager.moveBlockDOM(this.draggedId, prev.dataset.id, true) : next && StateManager.moveBlockDOM(this.draggedId, next.dataset.id, false);
-      }
-      this.draggedId = null;
-      blockDraggingId = null;
-    },
-  };
-
   let scrubTimeout;
   function indicatorScrub(e, ind) {
     const r = ind.getBoundingClientRect(),
-      pC = meta.pageOrder.length;
+      pC = store.meta.pageOrder.length;
     if (pC <= 1) return;
     const idx = Utils.clamp(Math.floor((Utils.clamp(e.clientX - r.left, 0, r.width) / r.width) * pC), 0, pC - 1);
-    if (currentP !== idx) {
+    if (store.currentP !== idx) {
       // changed line
-      currentP = idx;
+      store.currentP = idx;
       clearTimeout(scrubTimeout);
       scrubTimeout = setTimeout(() => {
-        StateManager.changePage(idx, false);
+        store.changePage(idx, false);
       }, 50);
     }
   }
@@ -866,7 +715,21 @@
     let isPointerActive = false;
 
     const handleDown = (e) => {
-      if (e.button !== 0) return; // Only trigger on left-click
+      if (e.button !== 0) return;
+
+      // 🛑 CRITICAL FIX: Don't steal the pointer if clicking on interactive elements!
+      if (
+        e.target.tagName === "TEXTAREA" ||
+        e.target.classList.contains("bullet-text") ||
+        e.target.closest(".region-box") ||
+        e.target.closest(".draggable-image") ||
+        e.target.closest("button") ||
+        e.target.closest("#sticker-drawer") ||
+        e.target.closest("#page-indicator")
+      ) {
+        return;
+      }
+
       isPointerActive = true;
       node.setPointerCapture(e.pointerId);
       if (onStart) onStart(e);
@@ -887,7 +750,7 @@
     node.addEventListener("pointerdown", handleDown);
     node.addEventListener("pointermove", handleMove);
     node.addEventListener("pointerup", handleUp);
-    node.addEventListener("pointercancel", handleUp); // Safely handle interruptions
+    node.addEventListener("pointercancel", handleUp);
 
     return {
       destroy() {
@@ -898,22 +761,70 @@
       },
     };
   }
-
-  function autoResize(node) {
+  function autoResize(node, text) {
     const resize = () => {
       node.style.height = "auto";
       node.style.height = node.scrollHeight + "px";
     };
+
     node.addEventListener("input", resize);
-    // Tiny timeout to ensure DOM is rendered before first calculation
     setTimeout(resize, 0);
 
     return {
+      update() {
+        // Triggers instantly whenever the text bound parameter changes programmatically! 🎉
+        resize();
+      },
       destroy() {
         node.removeEventListener("input", resize);
       },
     };
   }
+  const EventController = {
+    handleContextMenu(e) {
+      e.preventDefault();
+      contextMenuX = e.clientX;
+      contextMenuY = e.clientY;
+      contextMenuItems = [{ label: "Page Options 📄", action: () => console.log("Wrapper clicked!") }];
+      contextMenuVisible = true;
+    },
+    handleDragStart(e) {
+      const id = e.target.closest(".bullet-block")?.dataset?.id;
+      if (id) blockDraggingId = id;
+    },
+    handleDragOver(e) {
+      e.preventDefault();
+    },
+    handleDragEnd(e) {
+      blockDraggingId = null;
+    },
+    handleKeydown(e) {
+      const id = e.target.dataset.id;
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        EditorEngine.splitBlock(id, e.target.selectionStart);
+      }
+      if (e.key === "Backspace" && e.target.selectionStart === 0) {
+        e.preventDefault();
+        EditorEngine.mergeWithPrevious(id);
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        EditorEngine.indentBlock(id, e.shiftKey ? -1 : 1);
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        EditorEngine.navigateVertical(id, -1);
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        EditorEngine.navigateVertical(id, 1);
+      }
+    },
+    handleDblClick(e) {
+      // Add any specific double click logic here if needed!
+    },
+  };
 
   // ==========================================
   // 9. APP INITIALIZATION
@@ -922,27 +833,38 @@
     let isDestroyed = false;
 
     const initialize = async () => {
-      await StateManager.init();
+      await store.init(); // ✨ Now uses store
       if (isDestroyed) return;
       StickerBookManager.render();
-      ImageManager.restoreAll();
-      EventController.init();
+      store.restoreAllImages(); // ✨ Now uses store
     };
 
     initialize();
     window.addEventListener("beforeunload", () => {
-      if (StorageManager.saveTimeout) {
-        clearTimeout(StorageManager.saveTimeout);
-        StorageManager.executeSave();
+      if (store.saveTimeout) {
+        // ✨ Now uses store
+        clearTimeout(store.saveTimeout);
+        store.executeSave(); // ✨ Now uses store
       }
     });
 
     return () => {
       isDestroyed = true;
-      EventController.destroy();
     };
   });
+  function autoFocus(node, { id, focusId, offset }) {
+    $effect(() => {
+      if (id === focusId) {
+        node.focus();
+        const targetPos = Math.min(offset, node.value.length);
+        node.setSelectionRange(targetPos, targetPos);
+        activeFocusId = null; // Reset after firing 🎯
+      }
+    });
+  }
 </script>
+
+<svelte:window onclick={() => (contextMenuVisible = false)} />
 
 <!-- UI -->
 <button
@@ -985,7 +907,7 @@
           data-sticker-id={s.id}
           draggable="true"
           ondragstart={(e) => e.dataTransfer.setData("application/json", JSON.stringify({ type: "sticker", src: s.src }))}
-          onclick={() => ImageManager.spawn(s.src)}
+          onclick={() => store.spawnImage(s.src)}
           oncontextmenu={(e) => EventController.handleContextMenu(e)}
         >
           <img src={s.src} draggable="false" class="max-w-full max-h-24 object-contain filter drop-shadow-sm group-hover:drop-shadow-md" alt="sticker" />
@@ -1000,17 +922,16 @@
   class="flex w-full min-h-screen will-change-transform relative items-start {isScrubbing
     ? '!transition-none'
     : 'transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]'}"
-  style="transform: translateX(-{currentP * 100}vw)"
+  style="transform: translateX(-{store.currentP * 100}vw)"
 >
-  {#each meta.pageOrder as pId, i (pId)}
+  {#each store.meta.pageOrder as pId, i (pId)}
     <div
       class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden"
       data-page-id={pId}
-      bind:this={pageWrappers[pId]}
       use:pointerInteract={{
-        onStart: (e) => EventController.handleMouseDown(e),
-        onMove: (e) => EventController.handleMouseMove(e),
-        onEnd: (e) => EventController.handleMouseUp(e),
+        onStart: (e) => RegionManager.startDrawing(e),
+        onMove: (e) => RegionManager.draw(e),
+        onEnd: (e) => RegionManager.stopDrawing(e),
       }}
       ondblclick={(e) => EventController.handleDblClick(e)}
       oncontextmenu={(e) => EventController.handleContextMenu(e)}
@@ -1018,7 +939,7 @@
       <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">{i + 1}</div>
 
       <!-- Regions -->
-      {#each meta.regions.filter((r) => r.surfaceId === pId) as r (r.id)}
+      {#each store.meta.regions.filter((r) => r.surfaceId === pId) as r (r.id)}
         <div
           class="region-box absolute bg-transparent hover:bg-white/40 border border-transparent hover:border-zinc-200 transition-colors duration-300 rounded-lg flex flex-col layer-paper"
           data-region-id={r.id}
@@ -1026,50 +947,70 @@
           style="left: {r.x}px; top: {r.y}px; width: {r.width}px; height: {r.height}px"
         >
           <div
+            use:draggableRegion={r.id}
             class="region-header h-5 bg-transparent cursor-grab active:cursor-grabbing rounded-t-lg flex items-center px-2 hover:bg-black/5 transition-colors group"
-            use:pointerInteract={{
-              onStart: (e) => EventController.handleMouseDown(e),
-              onMove: (e) => EventController.handleMouseMove(e),
-              onEnd: (e) => EventController.handleMouseUp(e),
-            }}
           ></div>
+
           <div class="region-content flex-1 overflow-y-auto py-4 pr-4 pl-10 cursor-text" style="touch-action: pan-y;">
             <div
               class="bujo-list min-h-full"
               data-region-page-id={r.pageId}
               ondragover={(e) => EventController.handleDragOver(e)}
               ondragend={(e) => EventController.handleDragEnd(e)}
+              ondrop={(e) => {
+                e.preventDefault();
+                const draggedId = e.dataTransfer.getData("text/plain");
+                const targetBlock = e.target.closest(".bullet-block");
+
+                if (draggedId && targetBlock) {
+                  const targetId = targetBlock.dataset.id;
+                  const rect = targetBlock.getBoundingClientRect();
+                  const insertAfter = e.clientY > rect.top + rect.height / 2;
+                  store.moveBlockDOM(draggedId, targetId, insertAfter);
+                }
+                blockDraggingId = null;
+              }}
             >
-              {#if pages[r.pageId]}
-                {#each pages[r.pageId] as b (b.id)}
+              {#if store.pages[r.pageId]}
+                {#each store.pages[r.pageId] as b (b.id)}
                   <div
                     class="relative flex items-start mb-2 bullet-block group {blockDraggingId === b.id ? 'dragging' : ''}"
                     data-id={b.id}
-                    bind:this={blockElements[b.id]}
                     style="margin-left: {b.depth * CONFIG.INDENT_PX}px"
                     draggable={blockDraggingId === b.id ? "true" : "false"}
                     ondragstart={(e) => EventController.handleDragStart(e)}
                   >
-                    <div class={Utils.getHandleClasses(CONFIG.CYCLE.includes(b.type))} draggable="false">
+                    <div
+                      class={Utils.getHandleClasses(CONFIG.CYCLE.includes(b.type))}
+                      draggable="true"
+                      ondragstart={(e) => {
+                        e.dataTransfer.setData("text/plain", b.id);
+                        blockDraggingId = b.id;
+                      }}
+                      ondragend={() => (blockDraggingId = null)}
+                    >
                       {CONFIG.CYCLE.includes(b.type) ? CONFIG.BULLETS[b.type] : "::"}
                     </div>
                     <textarea
                       data-id={b.id}
+                      use:autoFocus={{ id: b.id, focusId: activeFocusId, offset: activeCursorOffset }}
                       class="{Utils.getBlockClasses(b.type)} resize-none overflow-hidden bg-transparent"
                       rows="1"
                       spellcheck="false"
                       bind:value={b.text}
-                      use:autoResize
-                      bind:this={textElements[b.id]}
+                      use:autoResize={b.text}
                       onkeydown={(e) => EventController.handleKeydown(e)}
-                      oninput={() => EditorEngine.updateText(b.id)}
+                      oninput={(e) => EditorEngine.updateText(b.id, e.target.value)}
                     ></textarea>
                   </div>
                 {/each}
               {/if}
             </div>
           </div>
-          <div class="region-resizer absolute bottom-0 right-0 w-5 h-5 cursor-se-resize flex items-end justify-end p-1 opacity-0 hover:opacity-100 transition-opacity">
+          <div
+            use:resizableRegion={r.id}
+            class="region-resizer absolute bottom-0 right-0 w-5 h-5 cursor-se-resize flex items-end justify-end p-1 opacity-0 hover:opacity-100 transition-opacity"
+          >
             <div class="w-2 h-2 border-r-2 border-b-2 border-zinc-400 rounded-sm pointer-events-none"></div>
           </div>
         </div>
@@ -1084,23 +1025,25 @@
       {/if}
 
       <!-- Images -->
-      {#each meta.placedImages.filter((img) => img.pageId === pId) as img (img.id)}
-        {#if loadedImages[img.id]}
+      {#each store.meta.placedImages.filter((img) => img.pageId === pId) as img (img.id)}
+        {#if store.loadedImages[img.id]}
           <img
-            src={loadedImages[img.id]}
+            src={store.loadedImages[img.id]}
+            oncontextmenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation(); // 🛡️ Stops the page-wrapper menu from hijacking the click!
+              contextMenuX = e.clientX;
+              contextMenuY = e.clientY;
+              contextMenuItems = [{ label: "Delete Image 🗑️", danger: true, action: () => store.removeImage(img.id) }];
+              contextMenuVisible = true;
+            }}
             class="draggable-image layer-{img.layerBucket || 'sticker'} transition-transform duration-200 {zoomedImgId === img.id ? 'scale-125' : 'scale-100'}"
             data-img-id={img.id}
             data-page-id={img.pageId}
             data-locked={img.locked ? "true" : null}
             alt="placed"
-            style="left: {img.left}px; top: {img.top}px; rotate: {img.rotation || 0}deg; opacity: {img.opacity ?? 1}; {imgDragId === img.id
-              ? 'pointer-events: none; z-index: 100; transition: none;'
-              : ''}"
-            use:pointerInteract={{
-              onStart: (e) => EventController.handleMouseDown(e),
-              onMove: (e) => EventController.handleMouseMove(e),
-              onEnd: (e) => EventController.handleMouseUp(e),
-            }}
+            style="left: {img.left}px; top: {img.top}px; rotate: {img.rotation || 0}deg; opacity: {img.opacity ?? 1};"
+            use:draggableImage={img}
           />
         {/if}
       {/each}
@@ -1127,17 +1070,17 @@
     ind._isScrubbing = false;
     isScrubbing = false; // ✨ SVELTE WAY
     ind.releasePointerCapture(e.pointerId);
-    await StorageManager.executeSave();
+    await store.executeSave();
   }}
   onclick={(e) => {
     const dot = e.target.closest(".indicator-dot");
-    if (dot) StateManager.changePage(parseInt(dot.dataset.idx), false);
+    if (dot) store.changePage(parseInt(dot.dataset.idx), false);
   }}
 >
-  {#each meta.pageOrder as _, i}
+  {#each store.meta.pageOrder as _, i}
     <span
       data-idx={i}
-      class="indicator-dot pointer-events-none h-2 rounded-full transition-all duration-300 {i === currentP ? 'w-6 bg-zinc-800' : 'w-2 bg-zinc-300 hover:bg-zinc-400'}"
+      class="indicator-dot pointer-events-none h-2 rounded-full transition-all duration-300 {i === store.currentP ? 'w-6 bg-zinc-800' : 'w-2 bg-zinc-300 hover:bg-zinc-400'}"
     ></span>
   {/each}
 </div>
