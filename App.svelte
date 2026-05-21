@@ -1,6 +1,10 @@
 <script>
   import { onMount, tick } from "svelte";
   let isScrubbing=$state(false),zoomedImgId=$state(null),stickerDrawerOpen=$state(false),loadedStickers=$state([]),contextMenuVisible=$state(false),contextMenuX=$state(0),contextMenuY=$state(0),contextMenuItems=$state([]),isDrawingRegion=$state(false),tempRegion=$state({x:0,y:0,w:0,h:0}),regionDragId=$state(null),blockDraggingId=$state(null),activeFocusId=$state(null),activeCursorOffset=$state(0),focusedRegionId=$state(null),activePackId=$state("all"),promptVisible=$state(false),promptTitle=$state(""),promptValue=$state(""),promptCallback=$state(null),packSelectorVisible=$state(false),packSelectorStickerId=$state(null);
+  let draggingStickerId = $state(null);
+  const StickerCache = new Map();
+
+
   const CONFIG={BULLETS:{task:"•",completed:"✕",migrated:">",scheduled:"<",event:"○",note:"-"},CYCLE:["task","completed","migrated","scheduled","event","note"],MD_MAP:{"* ":"task","x ":"completed","> ":"migrated","< ":"scheduled","o ":"event","- ":"note","# ":"h1","## ":"h2","### ":"h3","#### ":"h4","##### ":"h5","###### ":"h6"},H_STYLES:{h1:"text-4xl font-bold mt-6 mb-2",h2:"text-3xl font-bold mt-5 mb-2",h3:"text-2xl font-bold mt-4 mb-1",h4:"text-xl font-semibold mt-3 mb-1",h5:"text-lg font-semibold mt-2 mb-1",h6:"text-base font-semibold uppercase tracking-wider mt-2 mb-1 text-zinc-500"},SAVE_TIMEOUT_MS:500,LAYERS:["background","paper","sticker","floating","focus"],OPACITIES:[1,0.75,0.5,0.25],INDENT_PX:28,MIN_REGION_SIZE:50,KEY_JUMP_THRESHOLD:24,MAX_DEPTH:4};
   const DOM_IDS={APP:"app",INDICATOR:"page-indicator",STICKER_TOGGLE:"sticker-toggle",STICKER_DRAWER:"sticker-drawer",STICKER_UPLOAD:"sticker-upload",STICKER_GRID:"sticker-grid",CONTEXT_MENU:"custom-context-menu"};
   class BujoStore{
@@ -119,44 +123,77 @@
     writeJsonAtomic:async(p,d)=>api?await api.writeJsonAtomic(p,d):memFs.set(p,d),
     trashJson:async p=>api?await api.trashJson(p):memFs.delete(p)
   };
-  const StickerBookManager={
-    async saveSticker(b64){
-      const id=Utils.generateId();
-      await FileSystemAPI.writeJsonAtomic(`images/sticker-${id}.json`,{src:b64});
-      if(!store.meta.stickers) store.meta.stickers=[];
-      store.meta.stickers = [...store.meta.stickers, id];
-      if(activePackId!=="all"&&store.meta.stickerPacks){
-        store.meta.stickerPacks = store.meta.stickerPacks.map(p => {
-          if (p.id === activePackId) {
-            return { ...p, stickers: [...(p.stickers || []), id] };
-          }
-          return p;
-        });
-      }
-      await store.executeSave();
-      this.render();
-    },
-    async removeSticker(id){
-      if (store.meta.stickers) {
-        store.meta.stickers = store.meta.stickers.filter(sId => sId !== id);
-      }
-      if (store.meta.stickerPacks) {
-        store.meta.stickerPacks = store.meta.stickerPacks.map(pack => {
-          if (pack.stickers) {
-            return { ...pack, stickers: pack.stickers.filter(sId => sId !== id) };
-          }
-          return pack;
-        });
-      }
-      await store.executeSave();
-      this.render();
-      await FileSystemAPI.trashJson(`images/sticker-${id}.json`);
-    },
-    async render(){
-      const list=activePackId==="all"?(store.meta.stickers||[]):(store.meta.stickerPacks?.find(p=>p.id===activePackId)?.stickers||[]);
-      loadedStickers=(await Promise.all(list.map(async id=>{const f=await FileSystemAPI.readJson(`images/sticker-${id}.json`);return f?{id,src:f.src}:null;}))).filter(Boolean);
+
+
+  const StickerBookManager = {
+  async saveSticker(b64){
+    const id = Utils.generateId();
+    await FileSystemAPI.writeJsonAtomic(`images/sticker-${id}.json`, {src: b64});
+    StickerCache.set(id, b64); // Cache instantly 🧠
+
+    store.meta.stickers = [...(store.meta.stickers || []), id];
+    if(activePackId !== "all" && store.meta.stickerPacks){
+      store.meta.stickerPacks = store.meta.stickerPacks.map(p =>
+        p.id === activePackId ? { ...p, stickers: [...(p.stickers || []), id] } : p
+      );
     }
-  };
+    await store.executeSave();
+    this.render();
+  },
+  async removeSticker(id){
+    if (store.meta.stickers) store.meta.stickers = store.meta.stickers.filter(sId => sId !== id);
+    if (store.meta.stickerPacks) {
+      store.meta.stickerPacks = store.meta.stickerPacks.map(pack => ({
+        ...pack, stickers: (pack.stickers || []).filter(sId => sId !== id)
+      }));
+    }
+    StickerCache.delete(id); // Clear cache 🧹
+    await store.executeSave();
+    this.render();
+    await FileSystemAPI.trashJson(`images/sticker-${id}.json`);
+  },
+  async loadSticker(id) { // ⚡ Fast loading
+    if (StickerCache.has(id)) return { id, src: StickerCache.get(id) };
+    const f = await FileSystemAPI.readJson(`images/sticker-${id}.json`);
+    if (f && f.src) { StickerCache.set(id, f.src); return { id, src: f.src }; }
+    return null;
+  },
+  async render(){
+    const list = activePackId === "all" ? (store.meta.stickers || []) : (store.meta.stickerPacks?.find(p => p.id === activePackId)?.stickers || []);
+    loadedStickers = (await Promise.all(list.map(id => this.loadSticker(id)))).filter(Boolean);
+  },
+  // --- 📦 Encapsulated Pack Logic ---
+  async createPack(name) {
+    if (!name || !name.trim()) return;
+    const newPack = { id: `pack-${Utils.generateId()}`, name: name.trim(), stickers: [] };
+    store.meta.stickerPacks = [...(store.meta.stickerPacks || []), newPack];
+    store.meta.activePackId = newPack.id;
+    activePackId = newPack.id;
+    await store.executeSave();
+    this.render();
+  },
+  async renamePack(packId, newName) {
+    store.meta.stickerPacks = store.meta.stickerPacks.map(p => p.id === packId ? { ...p, name: newName.trim() } : p);
+    await store.executeSave();
+  },
+  async deletePack(packId) {
+    store.meta.stickerPacks = store.meta.stickerPacks.filter(p => p.id !== packId);
+    if (activePackId === packId) { activePackId = "all"; store.meta.activePackId = "all"; }
+    await store.executeSave();
+    this.render();
+  },
+  async toggleStickerInPack(stickerId, packId) {
+    store.meta.stickerPacks = store.meta.stickerPacks.map(p => {
+      if (p.id === packId) {
+        const s = p.stickers || [];
+        return { ...p, stickers: s.includes(stickerId) ? s.filter(id => id !== stickerId) : [...s, stickerId] };
+      }
+      return p;
+    });
+    await store.executeSave();
+    this.render();
+  }
+};
   const RegionManager={
     startX:0,startY:0,surfaceId:null,
     startDrawing(e){const w=e.target.closest(".page-wrapper");if(!w)return;isDrawingRegion=true;this.surfaceId=w.dataset.pageId;const o=Utils.calcRectOffset(e.clientX,e.clientY,w.getBoundingClientRect());this.startX=o.x;this.startY=o.y;tempRegion={x:this.startX,y:this.startY,w:0,h:0,surfaceId:this.surfaceId};},
@@ -250,104 +287,14 @@
     }, 50);
   }
 
-  function createNewPack() {
-    showCustomPrompt("Create New Sticker Pack 📁", "", async (name) => {
-      if (!name || !name.trim()) return;
-      const newPack = {
-        id: `pack-${Utils.generateId()}`,
-        name: name.trim(),
-        stickers: []
-      };
-      if (!store.meta) {
-        store.meta = { pageOrder: [], stickers: [], placedImages: [], regions: [], stickerPacks: [], activePackId: "all" };
-      }
-      const currentPacks = store.meta.stickerPacks || [];
-      store.meta.stickerPacks = [...currentPacks, newPack];
-      store.meta.activePackId = newPack.id;
-      activePackId = newPack.id;
-      await store.executeSave();
-      await StickerBookManager.render();
-    });
-  }
 
-  function renamePack(packId) {
-    if (!store.meta || !store.meta.stickerPacks) return;
-    const pack = store.meta.stickerPacks.find(p => p.id === packId);
-    if (!pack) return;
-    showCustomPrompt("Rename Sticker Pack ✏️", pack.name, async (newName) => {
-      if (!newName || !newName.trim()) return;
-      store.meta.stickerPacks = store.meta.stickerPacks.map(p => {
-        if (p.id === packId) {
-          return { ...p, name: newName.trim() };
-        }
-        return p;
-      });
-      await store.executeSave();
-    });
-  }
 
-  async function deletePack(packId) {
-    if (!store.meta || !store.meta.stickerPacks) return;
-    const pack = store.meta.stickerPacks.find(p => p.id === packId);
-    if (!pack) return;
-    if (confirm(`Are you sure you want to delete the pack "${pack.name}"? The stickers inside will remain in your general collection.`)) {
-      store.meta.stickerPacks = store.meta.stickerPacks.filter(p => p.id !== packId);
-      if (activePackId === packId) {
-        activePackId = "all";
-        store.meta.activePackId = "all";
-      }
-      await store.executeSave();
-      await StickerBookManager.render();
-    }
-  }
 
-  async function toggleStickerInPack(stickerId, packId) {
-    if (!store.meta || !store.meta.stickerPacks) return;
-    store.meta.stickerPacks = store.meta.stickerPacks.map(p => {
-      if (p.id === packId) {
-        const stickers = p.stickers || [];
-        if (stickers.includes(stickerId)) {
-          return { ...p, stickers: stickers.filter(id => id !== stickerId) };
-        } else {
-          return { ...p, stickers: [...stickers, stickerId] };
-        }
-      }
-      return p;
-    });
-    await store.executeSave();
-    await StickerBookManager.render();
-  }
 
-  async function removeStickerFromPack(stickerId, packId) {
-    if (!store.meta || !store.meta.stickerPacks) return;
-    store.meta.stickerPacks = store.meta.stickerPacks.map(p => {
-      if (p.id === packId) {
-        return { ...p, stickers: (p.stickers || []).filter(id => id !== stickerId) };
-      }
-      return p;
-    });
-    await store.executeSave();
-    await StickerBookManager.render();
-  }
 
-  async function addStickerToPack(stickerId, packId) {
-    if (!store.meta || !store.meta.stickerPacks) return;
-    let added = false;
-    store.meta.stickerPacks = store.meta.stickerPacks.map(p => {
-      if (p.id === packId) {
-        const stickers = p.stickers || [];
-        if (!stickers.includes(stickerId)) {
-          added = true;
-          return { ...p, stickers: [...stickers, stickerId] };
-        }
-      }
-      return p;
-    });
-    if (added) {
-      await store.executeSave();
-      await StickerBookManager.render();
-    }
-  }
+
+
+
 
 
 
@@ -375,8 +322,9 @@
   }
 </script>
 
-<svelte:window onclick={()=>contextMenuVisible=false} onkeydown={EventController.handleGlobalKeydown}/>
+<svelte:window onclick={()=>contextMenuVisible=false} onkeydown={EventController.handleGlobalKeydown} onpointerup={()=>draggingStickerId=null}/>
 <button id="sticker-toggle" class="fixed top-6 right-6 w-12 h-12 bg-zinc-900 text-white rounded-full shadow-[0_8px_30px_rgba(0,0,0,0.15)] text-2xl z-[60] hover:scale-110 active:scale-95 hover:bg-zinc-800 transition-all duration-300 flex items-center justify-center border border-zinc-800" onclick={()=>stickerDrawerOpen=!stickerDrawerOpen}>🎒</button>
+
 <div id="sticker-drawer" class="fixed top-0 right-0 w-[340px] h-screen bg-white/90 backdrop-blur-lg shadow-[-10px_0_40px_rgba(0,0,0,0.04)] z-[50] transform transition-transform duration-500 ease-out border-l border-zinc-200/60 p-6 overflow-y-auto {stickerDrawerOpen?'translate-x-0':'translate-x-full'}">
   <div class="flex items-center justify-between mb-2 mt-16">
     <h2 class="text-2xl font-extrabold text-zinc-800 tracking-tight">Stickers 🌟</h2>
@@ -385,42 +333,29 @@
     </span>
   </div>
   <p class="text-xs text-zinc-500 mb-5 leading-relaxed">Double-click any floating image on your page to save it here! Or upload new ones directly 👇 💡 <b>Drag stickers onto tabs</b> to organize them, or right-click for options.</p>
-  
-  <!-- Sticker Packs Tabs -->
+
   <div class="flex flex-wrap gap-1.5 items-center mb-6 pb-2 border-b border-zinc-100">
-    <button 
+
+    <button
       class="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 active:scale-95 border {activePackId === 'all' ? 'bg-zinc-900 text-white border-zinc-900 shadow-sm' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-600 border-zinc-200/50'}"
       onclick={() => { activePackId = 'all'; store.meta.activePackId = 'all'; store.requestSave(); }}
-      ondragover={e => {
-        if (activePackId !== "all") {
-          e.preventDefault();
+      onpointerenter={e => {
+        if (draggingStickerId && draggingStickerId !== "all") {
           e.currentTarget.classList.add("!bg-zinc-800", "!text-white", "scale-105", "!border-zinc-800");
         }
       }}
-      ondragleave={e => {
+      onpointerleave={e => e.currentTarget.classList.remove("!bg-zinc-800", "!text-white", "scale-105", "!border-zinc-800")}
+      onpointerup={async e => {
         e.currentTarget.classList.remove("!bg-zinc-800", "!text-white", "scale-105", "!border-zinc-800");
+        draggingStickerId = null; // Drop consumed! 🍽️
       }}
-      ondrop={async e => {
-        e.preventDefault();
-        e.currentTarget.classList.remove("!bg-zinc-800", "!text-white", "scale-105", "!border-zinc-800");
-        if (activePackId === "all") return;
-        try {
-          const data = JSON.parse(e.dataTransfer.getData("application/json"));
-          if (data && data.type === "sticker" && data.id) {
-            await removeStickerFromPack(data.id, activePackId);
-          }
-        } catch (err) {
-          console.error(err);
-        }
-      }}
-      title={activePackId !== "all" ? "Drag stickers here to remove them from the active pack" : "All Stickers"}
     >
       All
     </button>
-    
+
     {#if store.meta.stickerPacks}
       {#each store.meta.stickerPacks as pack (pack.id)}
-        <button 
+        <button
           class="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 active:scale-95 border {activePackId === pack.id ? 'bg-zinc-900 text-white border-zinc-900 shadow-sm' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-600 border-zinc-200/50'}"
           onclick={() => { activePackId = pack.id; store.meta.activePackId = pack.id; store.requestSave(); }}
           oncontextmenu={e => {
@@ -431,33 +366,29 @@
             contextMenuItems = [
               {
                 label: "Rename Pack ✏️",
-                action: () => renamePack(pack.id)
+                action: () => showCustomPrompt("Rename Sticker Pack ✏️", pack.name, (newName) => StickerBookManager.renamePack(pack.id, newName))
               },
               {
                 label: "Delete Pack 🗑️",
                 danger: true,
-                action: () => deletePack(pack.id)
+                action: () => StickerBookManager.deletePack(pack.id)
               }
             ];
             contextMenuVisible = true;
           }}
-          ondragover={e => {
-            e.preventDefault();
-            e.currentTarget.classList.add("!bg-zinc-800", "!text-white", "scale-105", "!border-zinc-800");
+          onpointerenter={e => {
+            if (draggingStickerId && draggingStickerId !== "all") {
+              e.currentTarget.classList.add("!bg-zinc-800", "!text-white", "scale-105", "!border-zinc-800");
+            }
           }}
-          ondragleave={e => {
+          onpointerleave={e => {
             e.currentTarget.classList.remove("!bg-zinc-800", "!text-white", "scale-105", "!border-zinc-800");
           }}
-          ondrop={async e => {
-            e.preventDefault();
+          onpointerup={async e => {
             e.currentTarget.classList.remove("!bg-zinc-800", "!text-white", "scale-105", "!border-zinc-800");
-            try {
-              const data = JSON.parse(e.dataTransfer.getData("application/json"));
-              if (data && data.type === "sticker" && data.id) {
-                await addStickerToPack(data.id, pack.id);
-              }
-            } catch (err) {
-              console.error(err);
+            if (draggingStickerId) {
+              await StickerBookManager.toggleStickerInPack(draggingStickerId, pack.id);
+              draggingStickerId = null; // Consume the drop! 🍽️
             }
           }}
           title="Right-click to rename/delete. Drag stickers here to add."
@@ -466,10 +397,10 @@
         </button>
       {/each}
     {/if}
-    
-    <button 
+
+    <button
       class="w-7 h-7 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-700 flex items-center justify-center text-sm font-bold border border-zinc-200/60 active:scale-95 transition-all duration-200"
-      onclick={() => createNewPack()}
+      onclick={() => showCustomPrompt("Create New Sticker Pack 📁", "", (name) => StickerBookManager.createPack(name))}
       title="Create New Sticker Pack"
     >
       ＋
@@ -477,92 +408,109 @@
   </div>
 
   <label class="block w-full cursor-pointer bg-zinc-900 text-white hover:bg-zinc-800 text-center py-3 rounded-xl font-medium text-sm mb-6 transition-all duration-300 hover:shadow-md active:scale-[0.98] border border-transparent">➕ Upload Sticker<input type="file" id="sticker-upload" accept="image/*" class="hidden" onchange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>StickerBookManager.saveSticker(ev.target.result);r.readAsDataURL(f);}}/></label>
-  <div id="sticker-grid" class="grid grid-cols-2 gap-4">
-    {#if loadedStickers.length===0}<div class="col-span-2 text-center text-sm text-zinc-400 mt-4">No stickers saved yet! 😿</div>
-    {:else}{#each loadedStickers as s (s.id)}
-      <div 
-        class="sticker-item relative cursor-pointer group flex items-center justify-center p-3 bg-white/60 hover:bg-white rounded-2xl shadow-sm border border-zinc-200/50 hover:border-zinc-300 hover:shadow-[0_8px_20px_rgba(0,0,0,0.06)] hover:-translate-y-0.5 active:scale-95 transition-all duration-300" 
-        data-sticker-id={s.id} 
-        draggable="true" 
-        ondragstart={e=>e.dataTransfer.setData("application/json",JSON.stringify({type:"sticker",src:s.src}))} 
-        onclick={()=>store.spawnImage(s.src)}
-        oncontextmenu={e => {
-          e.preventDefault();
-          e.stopPropagation();
-          contextMenuX = e.clientX;
-          contextMenuY = e.clientY;
-          
-          const items = [];
-          
-          items.push({
-            label: "Manage Packs... 📂",
-            action: () => {
-              packSelectorStickerId = s.id;
-              packSelectorVisible = true;
-            }
-          });
 
-          if (activePackId !== "all") {
-            const activePack = store.meta.stickerPacks?.find(p => p.id === activePackId);
+  <div id="sticker-grid" class="grid grid-cols-2 gap-4">
+    {#if loadedStickers.length===0}
+      <div class="col-span-2 text-center text-sm text-zinc-400 mt-4">No stickers saved yet! 😿</div>
+    {:else}
+      {#each loadedStickers as s (s.id)}
+        <div
+          class="sticker-item relative cursor-grab active:cursor-grabbing group flex items-center justify-center p-3 bg-white/60 hover:bg-white rounded-2xl shadow-sm border border-zinc-200/50 transition-all duration-300 {draggingStickerId === s.id ? 'opacity-40 scale-95' : 'hover:-translate-y-0.5'}"
+          data-sticker-id={s.id}
+          onpointerdown={(e) => {
+            e.preventDefault();
+            draggingStickerId = s.id;
+          }}
+          onclick={()=>store.spawnImage(s.src)}
+          oncontextmenu={e => {
+            e.preventDefault();
+            e.stopPropagation();
+            contextMenuX = e.clientX;
+            contextMenuY = e.clientY;
+
+            const items = [];
+
             items.push({
-              label: `Remove from "${activePack?.name || 'Pack'}" ❌`,
+              label: "Manage Packs... 📂",
               action: () => {
-                removeStickerFromPack(s.id, activePackId);
+                packSelectorStickerId = s.id;
+                packSelectorVisible = true;
               }
             });
-          }
 
-          items.push({
-            label: "Delete Globally 🗑️",
-            danger: true,
-            action: () => {
-              if (confirm("Are you sure you want to delete this sticker permanently from all collections?")) {
-                StickerBookManager.removeSticker(s.id);
-              }
+            if (activePackId !== "all") {
+              const activePack = store.meta.stickerPacks?.find(p => p.id === activePackId);
+              items.push({
+                label: `Remove from "${activePack?.name || 'Pack'}" ❌`,
+                action: () => {
+                  StickerBookManager.toggleStickerInPack(s.id, activePackId);
+                }
+              });
             }
-          });
-          
-          contextMenuItems = items;
-          contextMenuVisible = true;
-        }}
-      >
-        <img src={s.src} draggable="false" class="max-w-full max-h-24 object-contain filter drop-shadow-sm group-hover:drop-shadow-md" alt="sticker"/>
-        <button 
-          class="absolute top-1.5 right-1.5 w-5 h-5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-500 rounded-full flex items-center justify-center text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-200" 
-          onclick={e => {
-            e.stopPropagation(); 
-            if (activePackId === "all") {
-              if (confirm("Delete this sticker permanently from all collections?")) {
-                StickerBookManager.removeSticker(s.id);
+
+            items.push({
+              label: "Delete Globally 🗑️",
+              danger: true,
+              action: () => {
+                if (confirm("Are you sure you want to delete this sticker permanently from all collections?")) {
+                  StickerBookManager.removeSticker(s.id);
+                }
               }
-            } else {
-              removeStickerFromPack(s.id, activePackId);
-            }
-          }} 
-          title={activePackId === "all" ? "Delete sticker globally" : "Remove sticker from this pack"}
+            });
+
+            contextMenuItems = items;
+            contextMenuVisible = true;
+          }}
         >
-          ✕
-        </button>
-      </div>
-    {/each}{/if}
+          <img src={s.src} draggable="false" class="max-w-full max-h-24 object-contain filter drop-shadow-sm group-hover:drop-shadow-md" alt="sticker"/>
+          <button
+            class="absolute top-1.5 right-1.5 w-5 h-5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-500 rounded-full flex items-center justify-center text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+            onclick={e => {
+              e.stopPropagation();
+              if (activePackId === "all") {
+                if (confirm("Delete this sticker permanently from all collections?")) {
+                  StickerBookManager.removeSticker(s.id);
+                }
+              } else {
+                StickerBookManager.toggleStickerInPack(s.id, activePackId);
+              }
+            }}
+            title={activePackId === "all" ? "Delete sticker globally" : "Remove sticker from this pack"}
+          >
+            ✕
+          </button>
+        </div>
+      {/each}
+    {/if}
   </div>
 </div>
 
 <div id="app" class="flex w-full min-h-screen will-change-transform relative items-start {isScrubbing?'!transition-none':'transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]'}" style="transform: translateX(-{store.currentP*100}vw)">
   {#each store.meta.pageOrder as pId,i (pId)}
-    <div class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden" data-page-id={pId} use:pointerAction={{ignore:e=>["TEXTAREA","BUTTON"].includes(e.target.tagName)||e.target.classList.contains("bullet-text")||e.target.closest(".region-box")||e.target.closest(".draggable-image")||e.target.closest("#sticker-drawer")||e.target.closest("#page-indicator"),onDown:e=>RegionManager.startDrawing(e),onMove:e=>RegionManager.draw(e),onUp:e=>RegionManager.stopDrawing(e)}} ondblclick={e=>EventController.handleDblClick(e)} ondragover={e=>e.preventDefault()} ondrop={async e=>{
-      e.preventDefault();
-      const dStr=e.dataTransfer.getData("application/json");
-      if(dStr){
-        try{
-          const d=JSON.parse(dStr);
-          if(d.type==="sticker"){
-            const rect=e.currentTarget.getBoundingClientRect();
-            store.spawnImage(d.src,e.clientX-rect.left,e.clientY-rect.top);
-          }
-        }catch(err){console.error(err);}
+    <div class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden" data-page-id={pId} use:pointerAction={{ignore:e=>["TEXTAREA","BUTTON"].includes(e.target.tagName)||e.target.classList.contains("bullet-text")||e.target.closest(".region-box")||e.target.closest(".draggable-image")||e.target.closest("#sticker-drawer")||e.target.closest("#page-indicator"),onDown:e=>RegionManager.startDrawing(e),onMove:e=>RegionManager.draw(e),onUp:e=>RegionManager.stopDrawing(e)}} ondblclick={e=>EventController.handleDblClick(e)} ondragover={e=>e.preventDefault()}
+onpointerup={async e => {
+  if (draggingStickerId) {
+    const s = loadedStickers.find(st => st.id === draggingStickerId);
+    if (s) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      store.spawnImage(s.src, e.clientX - rect.left, e.clientY - rect.top);
+    }
+    draggingStickerId = null;
+  }
+}}
+ondrop={async e=>{
+  e.preventDefault();
+  const dStr=e.dataTransfer.getData("application/json");
+  if(dStr){
+    try{
+      const d=JSON.parse(dStr);
+      if(d.type==="sticker"){
+        const rect=e.currentTarget.getBoundingClientRect();
+        store.spawnImage(d.src,e.clientX-rect.left,e.clientY-rect.top);
       }
-    }}>
+    }catch(err){console.error(err);}
+  }
+}}>
       <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">{i+1}</div>
       {#each store.meta.regions.filter(r=>r.surfaceId===pId) as r (r.id)}
         <div class="region-box absolute bg-zinc-50/80 hover:bg-zinc-100/80 border transition-colors duration-300 rounded-lg flex flex-col layer-paper {focusedRegionId === r.id ? 'bg-white border-zinc-800 shadow-md ring-1 ring-zinc-800/10' : 'border-zinc-300 hover:border-zinc-400 shadow-sm'}" data-region-id={r.id} data-page-id={r.pageId} data-locked={r.locked?"true":null} style="left:{r.x}px;top:{r.y}px;width:{r.width}px;height:{r.height}px" oncontextmenu={e=>{
@@ -669,10 +617,10 @@
   <div class="fixed inset-0 bg-black/40 backdrop-blur-sm z-[200] flex items-center justify-center transition-all duration-300">
     <div class="bg-white rounded-2xl shadow-2xl border border-zinc-200 p-6 w-[360px] animate-[slideIn_0.2s_ease-out_forwards]">
       <h3 class="text-lg font-bold text-zinc-800 mb-3">{promptTitle}</h3>
-      <input 
-        id="custom-prompt-input" 
-        type="text" 
-        bind:value={promptValue} 
+      <input
+        id="custom-prompt-input"
+        type="text"
+        bind:value={promptValue}
         class="w-full bg-zinc-50 border border-zinc-200 text-zinc-800 rounded-xl px-3 py-2.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-zinc-800/10 focus:border-zinc-800 transition-all duration-300 mb-4"
         placeholder="Enter pack name..."
         onkeydown={e => {
@@ -687,14 +635,14 @@
         }}
       />
       <div class="flex gap-2 justify-end">
-        <button 
-          class="px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl text-xs font-semibold active:scale-95 transition-all duration-200" 
+        <button
+          class="px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl text-xs font-semibold active:scale-95 transition-all duration-200"
           onclick={() => promptVisible = false}
         >
           Cancel
         </button>
-        <button 
-          class="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-xs font-semibold active:scale-95 transition-all duration-200" 
+        <button
+          class="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-xs font-semibold active:scale-95 transition-all duration-200"
           onclick={() => {
             if (promptCallback) promptCallback(promptValue);
             promptVisible = false;
@@ -712,16 +660,16 @@
     <div class="bg-white rounded-2xl shadow-2xl border border-zinc-200 p-6 w-[360px] animate-[slideIn_0.2s_ease-out_forwards]">
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-lg font-bold text-zinc-800">Manage Sticker Packs 📂</h3>
-        <button 
+        <button
           class="w-6 h-6 flex items-center justify-center rounded-full hover:bg-zinc-100 text-zinc-400 hover:text-zinc-600 transition-colors"
           onclick={() => packSelectorVisible = false}
         >
           ✕
         </button>
       </div>
-      
+
       <p class="text-xs text-zinc-500 mb-4">Select which custom packs should include this sticker:</p>
-      
+
       <div class="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
         {#if !store.meta.stickerPacks || store.meta.stickerPacks.length === 0}
           <div class="text-center py-6 text-sm text-zinc-400 border border-dashed border-zinc-200 rounded-xl">
@@ -730,9 +678,9 @@
         {:else}
           {#each store.meta.stickerPacks as pack (pack.id)}
             {@const isMember = pack.stickers && pack.stickers.includes(packSelectorStickerId)}
-            <button 
+            <button
               class="w-full flex items-center justify-between p-3 rounded-xl border text-sm font-semibold transition-all duration-200 active:scale-[0.98] {isMember ? 'bg-zinc-900 text-white border-zinc-900 shadow-sm' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-700 border-zinc-200/50'}"
-              onclick={() => toggleStickerInPack(packSelectorStickerId, pack.id)}
+              onclick={() => StickerBookManager.toggleStickerInPack(packSelectorStickerId, pack.id)}
             >
               <span>{pack.name}</span>
               {#if isMember}
@@ -744,10 +692,10 @@
           {/each}
         {/if}
       </div>
-      
+
       <div class="mt-6 flex justify-end">
-        <button 
-          class="px-5 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-xs font-semibold active:scale-95 transition-all duration-200 shadow-sm" 
+        <button
+          class="px-5 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-xs font-semibold active:scale-95 transition-all duration-200 shadow-sm"
           onclick={() => packSelectorVisible = false}
         >
           Done
