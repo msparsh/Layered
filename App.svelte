@@ -112,7 +112,7 @@
     async createPack(name:string){ if(!name?.trim())return; const id=`pack-${Utils.generateId()}`; this.update(()=>{ store.meta.stickerPacks=[...(store.meta.stickerPacks||[]),{id,name:name.trim(),stickers:[]}]; store.meta.activePackId=activePackId=id; }); },
     async renamePack(pId:string,name:string){ this.update(()=>store.meta.stickerPacks?.forEach(p=>{if(p.id===pId)p.name=name.trim();})); },
     async deletePack(pId:string){ this.update(()=>{ store.meta.stickerPacks=store.meta.stickerPacks?.filter(p=>p.id!==pId); if(activePackId===pId) store.meta.activePackId=activePackId="all"; }); },
-    async toggleStickerInPack(sId:string,pId:string){ this.update(()=>store.meta.stickerPacks?.forEach(p=>{if(p.id===pId){const s=p.stickers||[]; p.stickers=s.includes(sId)?s.filter(id=>id!==sId):[...s,sId];}})); }
+    async toggleStickerInPack(sId: string, pId: string) {this.update(() => {store.meta.stickerPacks?.forEach(pack => {if (pack.stickers) {pack.stickers = pack.stickers.filter(id => id !== sId);}});store.meta.stickerPacks?.forEach(pack => {if (pack.id === pId) {const s = pack.stickers || [];if (!s.includes(sId)) {pack.stickers = [...s, sId];}}});});},
   };
 
   const RegionManager={
