@@ -11,7 +11,7 @@
   interface LoadedSticker { id: string; src: string; }
   interface ContextMenuItem { label: string; danger?: boolean; action: () => void; }
 
-  let isScrubbing=$state(false),zoomedImgId=$state<string|null>(null),stickerDrawerOpen=$state(false),loadedStickers=$state<LoadedSticker[]>([]),contextMenuVisible=$state(false),contextMenuX=$state(0),contextMenuY=$state(0),contextMenuItems=$state<ContextMenuItem[]>([]),isDrawingRegion=$state(false),tempRegion=$state({x:0,y:0,w:0,h:0,surfaceId:"" as string|null}),blockDraggingId=$state<string|null>(null),activeFocusId=$state<string|null>(null),activeCursorOffset=$state(0),focusedRegionId=$state<string|null>(null),activePackId=$state("all"),promptVisible=$state(false),promptTitle=$state(""),promptValue=$state(""),promptCallback=$state<((v:string)=>void)|null>(null),packSelectorVisible=$state(false),packSelectorStickerId=$state<string|null>(null),draggingStickerId=$state<string|null>(null);
+  let zoomedImgId=$state<string|null>(null),stickerDrawerOpen=$state(false),loadedStickers=$state<LoadedSticker[]>([]),contextMenuVisible=$state(false),contextMenuX=$state(0),contextMenuY=$state(0),contextMenuItems=$state<ContextMenuItem[]>([]),isDrawingRegion=$state(false),tempRegion=$state({x:0,y:0,w:0,h:0,surfaceId:"" as string|null}),blockDraggingId=$state<string|null>(null),activeFocusId=$state<string|null>(null),activeCursorOffset=$state(0),focusedRegionId=$state<string|null>(null),activePackId=$state("all"),promptVisible=$state(false),promptTitle=$state(""),promptValue=$state(""),promptCallback=$state<((v:string)=>void)|null>(null),packSelectorVisible=$state(false),packSelectorStickerId=$state<string|null>(null),draggingStickerId=$state<string|null>(null),pointerX=$state(0),pointerY=$state(0);
   const StickerCache = new Map<string, string>();
 
   const CONFIG = {
@@ -79,13 +79,13 @@
     return{destroy:()=>evs.forEach((ev,i)=>node.removeEventListener(ev,hs[i]))};
   }
 
-  interface DragBehaviorParams { getObj:()=>any; keys:[string,string]; min?:[number,number]; }
+  interface DragBehaviorParams { getObj:()=>any; keys:string[]; min?:number[]; }
   const dragBehavior: Action<HTMLElement, DragBehaviorParams> = (node, { getObj, keys, min=[-Infinity,-Infinity] }) => {
     let sX:number, sY:number, iX:number, iY:number;
     return pointerAction(node, {
       ignore: () => getObj()?.locked,
-      onDown: (e:PointerEvent) => { const o = getObj(); if(o) { sX = e.clientX; sY = e.clientY; iX = o[keys[0]]; iY = o[keys[1]]; e.preventDefault(); e.stopPropagation(); } },
-      onMove: (e:PointerEvent) => { const o = getObj(); if(o) { o[keys[0]] = Math.max(min[0], iX + e.clientX - sX); o[keys[1]] = Math.max(min[1], iY + e.clientY - sY); } },
+      onDown: (e:PointerEvent) => { const o = getObj(); if(o) { sX = e.clientX; sY = e.clientY; iX = o[keys[0]]; if(keys.length>1) iY = o[keys[1]]; e.preventDefault(); e.stopPropagation(); } },
+      onMove: (e:PointerEvent) => { const o = getObj(); if(o) { o[keys[0]] = Math.max(min[0], iX + e.clientX - sX); if(keys.length>1) o[keys[1]] = Math.max(min[1]||-Infinity, iY + e.clientY - sY); } },
       onUp: () => store.requestSave()
     });
   }
@@ -117,9 +117,9 @@
 
   const RegionManager={
     startX:0,startY:0,surfaceId:null as string|null,
-    start(e:PointerEvent){const w=(e.target as HTMLElement).closest(".page-wrapper") as HTMLElement;if(!w)return;isDrawingRegion=true;this.surfaceId=w.dataset.pageId||null;const {x,y}=Utils.calcRectOffset(e.clientX,e.clientY,w.getBoundingClientRect());this.startX=x;this.startY=y;tempRegion={x,y,w:0,h:0,surfaceId:this.surfaceId};},
+    start(e:PointerEvent){const w=(e.target as HTMLElement).closest(".page-wrapper") as HTMLElement;if(!w)return;isDrawingRegion=true;document.body.style.userSelect="none";this.surfaceId=w.dataset.pageId||null;const {x,y}=Utils.calcRectOffset(e.clientX,e.clientY,w.getBoundingClientRect());this.startX=x;this.startY=y;tempRegion={x,y,w:0,h:0,surfaceId:this.surfaceId};},
     draw(e:PointerEvent){if(!isDrawingRegion)return;const w=([...Utils.qsa(".page-wrapper")] as HTMLElement[]).find(w=>w.dataset.pageId===this.surfaceId);if(!w)return;const {x,y}=Utils.calcRectOffset(e.clientX,e.clientY,w.getBoundingClientRect());tempRegion={...tempRegion,x:Math.min(this.startX,x),y:Math.min(this.startY,y),w:Math.abs(x-this.startX),h:Math.abs(y-this.startY)};},
-    async stop(){if(!isDrawingRegion)return;isDrawingRegion=false;if(tempRegion.surfaceId && tempRegion.w>CONFIG.MIN_REGION_SIZE&&tempRegion.h>CONFIG.MIN_REGION_SIZE){const pId=`page-${Utils.generateId()}`,nb=store.createBlock();store.meta.regions.push({id:Utils.generateId(),surfaceId:tempRegion.surfaceId,x:tempRegion.x,y:tempRegion.y,width:tempRegion.w,height:tempRegion.h,pageId:pId});store.pages[pId]=[nb];store.rebuildIndex();store.dirtyPages.add(pId);await store.executeSave();activeFocusId=nb.id;activeCursorOffset=0;}}
+    async stop(){if(!isDrawingRegion)return;isDrawingRegion=false;document.body.style.userSelect="";if(tempRegion.surfaceId && tempRegion.w>CONFIG.MIN_REGION_SIZE&&tempRegion.h>CONFIG.MIN_REGION_SIZE){const pId=`page-${Utils.generateId()}`,nb=store.createBlock();store.meta.regions.push({id:Utils.generateId(),surfaceId:tempRegion.surfaceId,x:tempRegion.x,y:tempRegion.y,width:tempRegion.w,height:tempRegion.h,pageId:pId});store.pages[pId]=[nb];store.rebuildIndex();store.dirtyPages.add(pId);await store.executeSave();activeFocusId=nb.id;activeCursorOffset=0;}}
   };
 
   const EditorEngine={
@@ -135,14 +135,10 @@
     nav(id:string,d:number){const c=store.getBlockCoords(id),t=c&&store.pages[c.pageId][c.bIdx+d];if(t){activeFocusId=t.id;activeCursorOffset=0;}}
   };
 
-  let scrubTimeout:any;
-  function indicatorScrub(e:PointerEvent,ind:HTMLElement){
-    const r=ind.getBoundingClientRect(),pC=store.meta.pageOrder.length;if(pC<=1)return;
-    const idx=Utils.clamp(Math.floor((Utils.clamp(e.clientX-r.left,0,r.width)/r.width)*pC),0,pC-1);
-    if(store.currentP!==idx){store.currentP=idx;clearTimeout(scrubTimeout);scrubTimeout=setTimeout(()=>store.changePage(idx,false),50);}
-  }
   const autoResize: Action<HTMLTextAreaElement> = (node)=>{const r=()=>{node.style.height="auto";node.style.height=node.scrollHeight+"px";};node.addEventListener("input",r);setTimeout(r,0);return{update:r,destroy:()=>node.removeEventListener("input",r)};}
-  const autoFocus: Action<HTMLTextAreaElement, {id:string,focusId:string|null,offset:number}> = (node,{id,focusId,offset})=>{$effect(()=>{if(id===focusId){node.focus();const tP=Math.min(offset,node.value.length);node.setSelectionRange(tP,tP);activeFocusId=null;}});}
+
+  // Use Svelte's tick() to ensure focus restoration safely happens after DOM updates ✨
+  const autoFocus: Action<HTMLTextAreaElement, {id:string,focusId:string|null,offset:number}> = (node,{id,focusId,offset})=>{$effect(()=>{if(id===focusId){tick().then(()=>{node.focus();const tP=Math.min(offset,node.value.length);node.setSelectionRange(tP,tP);activeFocusId=null;});}});}
 
   const globalKey=(e:KeyboardEvent)=>{const isI=["TEXTAREA","INPUT"].includes(document.activeElement?.tagName||""),l=e.key==="ArrowLeft",r=e.key==="ArrowRight";if((l||r)&&(!isI||e.altKey)){e.preventDefault();store.changePage(l?-1:1,true);}};
   const showCustomPrompt=(t:string,d:string,cb:(v:string)=>void)=>{promptTitle=t;promptValue=d||"";promptCallback=cb;promptVisible=true;setTimeout(()=>(document.getElementById("custom-prompt-input") as HTMLInputElement)?.select(),50);};
@@ -158,13 +154,13 @@
   });
 </script>
 
-<svelte:window onclick={()=>contextMenuVisible=false} onkeydown={(e:KeyboardEvent)=>globalKey(e)} onpointerup={()=>draggingStickerId=null}/>
+<svelte:window onpointermove={(e)=>{pointerX=e.clientX;pointerY=e.clientY;}} onclick={()=>contextMenuVisible=false} onkeydown={(e:KeyboardEvent)=>globalKey(e)} onpointerup={()=>draggingStickerId=null}/>
 
-<button class="fixed top-6 right-6 w-12 h-12 bg-zinc-900 text-white rounded-full shadow-[0_8px_30px_rgba(0,0,0,0.15)] text-2xl z-[60] hover:scale-110 active:scale-95 hover:bg-zinc-800 transition-all duration-300 flex items-center justify-center border border-zinc-800" onclick={()=>stickerDrawerOpen=!stickerDrawerOpen}>🎒</button>
+<button class="fixed top-6 right-6 w-12 h-12 bg-white text-zinc-800 border border-zinc-200 rounded-full shadow-[0_8px_30px_rgba(0,0,0,0.12)] text-2xl z-[60] hover:scale-110 active:scale-95 transition-all duration-300 flex items-center justify-center select-none" onclick={()=>stickerDrawerOpen=!stickerDrawerOpen}>🎒</button>
 
 <div class="fixed top-0 right-0 w-[340px] h-screen bg-white/90 backdrop-blur-lg shadow-[-10px_0_40px_rgba(0,0,0,0.04)] z-[50] transform transition-transform duration-500 ease-out border-l border-zinc-200/60 p-6 overflow-y-auto {stickerDrawerOpen?'translate-x-0':'translate-x-full'} flex flex-col">
   <div class="flex items-center justify-between mb-2 mt-16"><h2 class="text-2xl font-extrabold text-zinc-800 tracking-tight">Stickers 🌟</h2><span class="text-xs font-semibold px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-full border border-zinc-200/60 shadow-sm">{loadedStickers.length}</span></div>
-  <p class="text-xs text-zinc-500 mb-5 leading-relaxed">Double-click any floating image on your page to save it here! Or upload new ones directly 👇 💡 <b>Drag stickers onto tabs</b> to organize them.</p>
+  <p class="text-xs text-zinc-500 mb-5 leading-relaxed">Upload images here to turn them into stickers! 👇 💡 <b>Drag stickers onto tabs</b> to organize them.</p>
 
   <div class="flex flex-wrap gap-1.5 items-center mb-6 pb-2 border-b border-zinc-100">
     <button class={packBtnClass('all')} onclick={()=>{activePackId='all';store.meta.activePackId='all';store.requestSave();}} onpointerenter={(e:PointerEvent)=>tDrop(e,1)} onpointerleave={(e:PointerEvent)=>tDrop(e,0)} onpointerup={(e:PointerEvent)=>{tDrop(e,0);draggingStickerId=null;}}>All</button>
@@ -215,14 +211,14 @@
   </div>
 </div>
 
-<div class="flex w-full min-h-screen will-change-transform relative items-start {isScrubbing?'!transition-none':'transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]'}" style="transform: translateX(-{store.currentP*100}vw)">
+<div class="flex w-full min-h-screen will-change-transform relative items-start transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]" style="transform: translateX(-{store.currentP*100}vw)">
   {#each store.meta.pageOrder as pId,i (pId)}
     <div class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden" data-page-id={pId} use:pointerAction={{ignore:(e:PointerEvent)=>["TEXTAREA","BUTTON"].includes((e.target as HTMLElement).tagName)||(e.target as HTMLElement).classList.contains("bullet-text")||!!(e.target as HTMLElement).closest(".region-box")||!!(e.target as HTMLElement).closest(".draggable-image")||!!(e.target as HTMLElement).closest("#page-indicator"),onDown:(e:PointerEvent)=>RegionManager.start(e),onMove:(e:PointerEvent)=>RegionManager.draw(e),onUp:()=>RegionManager.stop()}} onpointerup={(e:PointerEvent)=>{if(draggingStickerId){const s=loadedStickers.find(st=>st.id===draggingStickerId);if(s){const r=e.currentTarget.getBoundingClientRect();store.spawnImage(s.src,e.clientX-r.left,e.clientY-r.top);}draggingStickerId=null;}}} ondragover={(e:DragEvent)=>e.preventDefault()} ondrop={(e:DragEvent)=>{e.preventDefault();try{const d=JSON.parse(e.dataTransfer?.getData("application/json")||"");if(d?.type==="sticker"){const r=(e.currentTarget as HTMLElement).getBoundingClientRect();store.spawnImage(d.src,e.clientX-r.left,e.clientY-r.top);}}catch(err){}}}>
       <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">{i+1}</div>
       {#each store.meta.regions.filter(r=>r.surfaceId===pId) as r (r.id)}
-        <div class="region-box absolute bg-zinc-50/80 hover:bg-zinc-100/80 border transition-colors duration-300 rounded-lg flex flex-col layer-paper {focusedRegionId===r.id?'bg-white border-zinc-800 shadow-md ring-1 ring-zinc-800/10':'border-zinc-300 hover:border-zinc-400 shadow-sm'}" data-locked={r.locked} style="left:{r.x}px;top:{r.y}px;width:{r.width}px;height:{r.height}px" oncontextmenu={(e:MouseEvent)=>openCtx(e,[{label:r.locked?"Unlock":"Lock",action:()=>{r.locked=!r.locked;store.requestSave();}},{label:"Clear",action:()=>{store.pages[r.pageId]=[store.createBlock()];store.rebuildIndex();store.dirtyPages.add(r.pageId);store.requestSave();}},{label:"Delete",danger:true,action:()=>store.removeRegion(r.id)}])}>
+        <div class="region-box absolute bg-zinc-50/80 hover:bg-zinc-100/80 border transition-colors duration-300 rounded-lg flex flex-col layer-paper {focusedRegionId===r.id?'bg-white border-zinc-800 shadow-md ring-1 ring-zinc-800/10':'border-zinc-300 hover:border-zinc-400 shadow-sm'}" data-locked={r.locked} style="left:{r.x}px;top:{r.y}px;width:{r.width}px;min-height:{r.height}px;" oncontextmenu={(e:MouseEvent)=>openCtx(e,[{label:r.locked?"Unlock":"Lock",action:()=>{r.locked=!r.locked;store.requestSave();}},{label:"Clear",action:()=>{store.pages[r.pageId]=[store.createBlock()];store.rebuildIndex();store.dirtyPages.add(r.pageId);store.requestSave();}},{label:"Delete",danger:true,action:()=>store.removeRegion(r.id)}])}>
           <div use:dragBehavior={{getObj:()=>store.meta.regions.find(x=>x.id===r.id),keys:['x','y']}} class="h-5 bg-transparent {r.locked?'cursor-default':'cursor-grab active:cursor-grabbing'} rounded-t-lg flex items-center px-2 hover:bg-black/5 transition-colors group"></div>
-          <div class="flex-1 overflow-y-auto py-4 pr-4 pl-10 cursor-text" style="touch-action: pan-y;">
+          <div class="flex-1 py-4 pr-4 pl-10 cursor-text" style="touch-action: pan-y;">
             <div class="min-h-full" ondragover={(e:DragEvent)=>e.preventDefault()} ondragend={()=>blockDraggingId=null} ondrop={(e:DragEvent)=>{e.preventDefault();const dId=e.dataTransfer?.getData("text/plain"),tB=(e.target as HTMLElement).closest(".bullet-block") as HTMLElement;if(dId&&tB){const r=tB.getBoundingClientRect();store.moveBlockDOM(dId,tB.dataset.id as string,e.clientY>r.top+r.height/2);}blockDraggingId=null;}}>
               {#if store.pages[r.pageId]}{#each store.pages[r.pageId] as b (b.id)}
                 <div class="relative flex items-start mb-2 bullet-block group {blockDraggingId===b.id?'dragging':''}" data-id={b.id} style="margin-left:{b.depth*CONFIG.INDENT_PX}px" draggable={blockDraggingId===b.id} ondragstart={(e:DragEvent)=>{const id=(e.target as HTMLElement).closest(".bullet-block")?.getAttribute("data-id");if(id)blockDraggingId=id;}}>
@@ -232,27 +228,34 @@
               {/each}{/if}
             </div>
           </div>
-          {#if !r.locked}<div use:dragBehavior={{getObj:()=>store.meta.regions.find(x=>x.id===r.id),keys:['width','height'],min:[CONFIG.MIN_REGION_SIZE,CONFIG.MIN_REGION_SIZE]}} class="absolute bottom-0 right-0 w-5 h-5 cursor-se-resize flex items-end justify-end p-1 opacity-0 hover:opacity-100 transition-opacity"><div class="w-2 h-2 border-r-2 border-b-2 border-zinc-400 rounded-sm pointer-events-none"></div></div>{/if}
+          {#if !r.locked}<div use:dragBehavior={{getObj:()=>store.meta.regions.find(x=>x.id===r.id),keys:['width','height'],min:[CONFIG.MIN_REGION_SIZE,CONFIG.MIN_REGION_SIZE]}} class="absolute bottom-0 right-0 w-5 h-5 cursor-se-resize flex items-end justify-end p-1 opacity-0 hover:opacity-100 transition-opacity z-10"><div class="w-2 h-2 border-r-2 border-b-2 border-zinc-400 rounded-sm pointer-events-none"></div></div>{/if}
         </div>
       {/each}
       {#if isDrawingRegion&&tempRegion.surfaceId===pId}<div class="absolute border border-zinc-400 bg-white/20 rounded-lg pointer-events-none layer-focus" style="left:{tempRegion.x}px;top:{tempRegion.y}px;width:{tempRegion.w}px;height:{tempRegion.h}px"></div>{/if}
       {#each store.meta.placedImages.filter(img=>img.pageId===pId) as img (img.id)}
         {#if store.loadedImages[img.id]}
-          <img src={store.loadedImages[img.id]} oncontextmenu={(e:MouseEvent)=>openCtx(e,[{label:img.locked?"Unlock":"Lock",action:()=>{img.locked=!img.locked;store.requestSave();}},{label:`Opacity: ${Math.round((img.opacity??1)*100)}% `,action:()=>{img.opacity=Utils.getNextOpacity(img.opacity||1);store.requestSave();}},{label:"Rotate",action:()=>{img.rotation=((img.rotation||0)+45)%360;store.requestSave();}},{label:`Layer: ${img.layerBucket||'sticker'}`,action:()=>{img.layerBucket=Utils.getNextLayer(img.layerBucket||'sticker',1);store.requestSave();}},{label:"Delete",danger:true,action:()=>store.removeImage(img.id)}])} ondblclick={async (e:MouseEvent)=>{e.stopPropagation();const src=store.loadedImages[img.id];if(src){await StickerBookManager.saveSticker(src);const btn=document.querySelector(".fixed.top-6");if(btn){btn.classList.add("animate-bounce");setTimeout(()=>btn.classList.remove("animate-bounce"),1000);}}}} class="draggable-image layer-{img.layerBucket||'sticker'} transition-transform duration-200 {zoomedImgId===img.id?'scale-125':'scale-100'}" data-locked={img.locked} alt="placed" style="left:{img.left}px;top:{img.top}px;rotate:{img.rotation||0}deg;opacity:{img.opacity??1};" use:dragBehavior={{getObj:()=>img,keys:['left','top']}}/>
+          <img src={store.loadedImages[img.id]} oncontextmenu={(e:MouseEvent)=>openCtx(e,[{label:img.locked?"Unlock":"Lock",action:()=>{img.locked=!img.locked;store.requestSave();}},{label:`Opacity: ${Math.round((img.opacity??1)*100)}% `,action:()=>{img.opacity=Utils.getNextOpacity(img.opacity||1);store.requestSave();}},{label:"Rotate",action:()=>{img.rotation=((img.rotation||0)+45)%360;store.requestSave();}},{label:`Layer: ${img.layerBucket||'sticker'}`,action:()=>{img.layerBucket=Utils.getNextLayer(img.layerBucket||'sticker',1);store.requestSave();}},{label:"Delete",danger:true,action:()=>store.removeImage(img.id)}])} class="draggable-image layer-{img.layerBucket||'sticker'} transition-transform duration-200 {zoomedImgId===img.id?'scale-125':'scale-100'}" data-locked={img.locked} alt="placed" style="left:{img.left}px;top:{img.top}px;rotate:{img.rotation||0}deg;opacity:{img.opacity??1};" use:dragBehavior={{getObj:()=>img,keys:['left','top']}}/>
         {/if}
       {/each}
     </div>
   {/each}
 </div>
 
-<div id="page-indicator" class="fixed bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-50 px-6 py-3.5 bg-zinc-100/90 backdrop-blur-md border border-zinc-300 rounded-full shadow-[0_8px_30px_rgba(0,0,0,0.12)] cursor-grab active:cursor-grabbing touch-none items-center" onpointerdown={(e:PointerEvent)=>{const i=e.currentTarget as any;i.setPointerCapture(e.pointerId);i._isScrubbing=true;isScrubbing=true;indicatorScrub(e,i);}} onpointermove={(e:PointerEvent)=>{const i=e.currentTarget as any;if(i._isScrubbing)indicatorScrub(e,i);}} onpointerup={async (e:PointerEvent)=>{const i=e.currentTarget as any;i._isScrubbing=false;isScrubbing=false;i.releasePointerCapture(e.pointerId);await store.executeSave();}} onclick={(e:MouseEvent)=>{const d=(e.target as HTMLElement).closest(".indicator-dot") as HTMLElement;if(d)store.changePage(parseInt(d.dataset.idx||"0"),false);}}>
-  {#each store.meta.pageOrder as _,i} <span data-idx={i} class="indicator-dot pointer-events-none h-2.5 rounded-full transition-all duration-300 {i===store.currentP?'w-7 bg-zinc-800':'w-2.5 bg-zinc-300 hover:bg-zinc-400'}"></span> {/each}
+<div id="page-indicator" class="fixed bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-50 px-6 py-3.5 bg-zinc-100/90 backdrop-blur-md border border-zinc-300 rounded-full shadow-[0_8px_30px_rgba(0,0,0,0.12)] items-center" onclick={(e:MouseEvent)=>{const d=(e.target as HTMLElement).closest(".indicator-dot") as HTMLElement;if(d)store.changePage(parseInt(d.dataset.idx||"0"),false);}}>
+  {#each store.meta.pageOrder as _,i} <span data-idx={i} class="indicator-dot cursor-pointer h-2.5 rounded-full transition-all duration-300 {i===store.currentP?'w-7 bg-zinc-800':'w-2.5 bg-zinc-300 hover:bg-zinc-400'}"></span> {/each}
 </div>
 
 {#if contextMenuVisible}
   <div class="fixed bg-white border border-zinc-200 shadow-xl rounded-md py-1 z-[100] w-48" style="left:{contextMenuX}px;top:{contextMenuY}px">
     {#each contextMenuItems as item} <button class="w-full text-left px-3 py-1.5 hover:bg-zinc-100 text-sm {item.danger?'text-red-600 font-medium':'text-zinc-800'}" onclick={(e:MouseEvent)=>{e.stopPropagation();item.action();contextMenuVisible=false;}}>{item.label}</button> {/each}
   </div>
+{/if}
+
+{#if draggingStickerId && draggingStickerId !== "all"}
+  {@const s = loadedStickers.find(st=>st.id===draggingStickerId)}
+  {#if s}
+    <img src={s.src} class="fixed pointer-events-none z-[9999] opacity-75 scale-110 drop-shadow-lg" style="left:{pointerX-50}px;top:{pointerY-50}px;width:100px;height:100px;object-fit:contain" alt="ghost"/>
+  {/if}
 {/if}
 
 <style>
