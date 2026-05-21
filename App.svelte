@@ -137,9 +137,31 @@
 
   const autoResize: Action<HTMLTextAreaElement> = (node)=>{const r=()=>{node.style.height="auto";node.style.height=node.scrollHeight+"px";};node.addEventListener("input",r);setTimeout(r,0);return{update:r,destroy:()=>node.removeEventListener("input",r)};}
 
-  // Use Svelte's tick() to ensure focus restoration safely happens after DOM updates ✨
-  const autoFocus: Action<HTMLTextAreaElement, {id:string,focusId:string|null,offset:number}> = (node,{id,focusId,offset})=>{$effect(()=>{if(id===focusId){tick().then(()=>{node.focus();const tP=Math.min(offset,node.value.length);node.setSelectionRange(tP,tP);activeFocusId=null;});}});}
+  const autoFocus: Action<HTMLTextAreaElement, {id:string, focusId:string|null, offset:number}> = (node, {id, focusId, offset}) => {
+    let currentFocusId = focusId;
+    let currentOffset = offset;
 
+    const doFocus = () => {
+      if (id === currentFocusId) {
+        tick().then(() => {
+          node.focus();
+          const tP = Math.min(currentOffset, node.value.length);
+          node.setSelectionRange(tP, tP);
+          activeFocusId = null;
+        });
+      }
+    };
+
+    doFocus(); // initial focus if needed
+
+    return {
+      update(params) {
+        currentFocusId = params.focusId;
+        currentOffset = params.offset;
+        doFocus();
+      }
+    };
+  };
   const globalKey=(e:KeyboardEvent)=>{const isI=["TEXTAREA","INPUT"].includes(document.activeElement?.tagName||""),l=e.key==="ArrowLeft",r=e.key==="ArrowRight";if((l||r)&&(!isI||e.altKey)){e.preventDefault();store.changePage(l?-1:1,true);}};
   const showCustomPrompt=(t:string,d:string,cb:(v:string)=>void)=>{promptTitle=t;promptValue=d||"";promptCallback=cb;promptVisible=true;setTimeout(()=>(document.getElementById("custom-prompt-input") as HTMLInputElement)?.select(),50);};
   const openCtx=(e:MouseEvent,items:ContextMenuItem[])=>{e.preventDefault();e.stopPropagation();contextMenuX=e.clientX;contextMenuY=e.clientY;contextMenuItems=items;contextMenuVisible=true;};
@@ -218,12 +240,22 @@
       {#each store.meta.regions.filter(r=>r.surfaceId===pId) as r (r.id)}
         <div class="region-box absolute bg-zinc-50/80 hover:bg-zinc-100/80 border transition-colors duration-300 rounded-lg flex flex-col layer-paper {focusedRegionId===r.id?'bg-white border-zinc-800 shadow-md ring-1 ring-zinc-800/10':'border-zinc-300 hover:border-zinc-400 shadow-sm'}" data-locked={r.locked} style="left:{r.x}px;top:{r.y}px;width:{r.width}px;min-height:{r.height}px;" oncontextmenu={(e:MouseEvent)=>openCtx(e,[{label:r.locked?"Unlock":"Lock",action:()=>{r.locked=!r.locked;store.requestSave();}},{label:"Clear",action:()=>{store.pages[r.pageId]=[store.createBlock()];store.rebuildIndex();store.dirtyPages.add(r.pageId);store.requestSave();}},{label:"Delete",danger:true,action:()=>store.removeRegion(r.id)}])}>
           <div use:dragBehavior={{getObj:()=>store.meta.regions.find(x=>x.id===r.id),keys:['x','y']}} class="h-5 bg-transparent {r.locked?'cursor-default':'cursor-grab active:cursor-grabbing'} rounded-t-lg flex items-center px-2 hover:bg-black/5 transition-colors group"></div>
-          <div class="flex-1 py-4 pr-4 pl-10 cursor-text" style="touch-action: pan-y;">
+          <div class="flex-1 py-4 pr-4 pl-10 cursor-text" style="touch-action: pan-y;"
+            onclick={(e) => {
+              const target = e.target;
+              if (target.closest?.('.bullet-handle') || target.tagName === 'TEXTAREA') return;
+              const blocks = store.pages[r.pageId];
+              if (blocks && blocks.length === 1 && blocks[0].text.trim() === "") {
+                activeFocusId = blocks[0].id;
+                activeCursorOffset = 0;
+              }
+            }}
+          >
             <div class="min-h-full" ondragover={(e:DragEvent)=>e.preventDefault()} ondragend={()=>blockDraggingId=null} ondrop={(e:DragEvent)=>{e.preventDefault();const dId=e.dataTransfer?.getData("text/plain"),tB=(e.target as HTMLElement).closest(".bullet-block") as HTMLElement;if(dId&&tB){const r=tB.getBoundingClientRect();store.moveBlockDOM(dId,tB.dataset.id as string,e.clientY>r.top+r.height/2);}blockDraggingId=null;}}>
               {#if store.pages[r.pageId]}{#each store.pages[r.pageId] as b (b.id)}
                 <div class="relative flex items-start mb-2 bullet-block group {blockDraggingId===b.id?'dragging':''}" data-id={b.id} style="margin-left:{b.depth*CONFIG.INDENT_PX}px" draggable={blockDraggingId===b.id} ondragstart={(e:DragEvent)=>{const id=(e.target as HTMLElement).closest(".bullet-block")?.getAttribute("data-id");if(id)blockDraggingId=id;}}>
                   <div class={Utils.getHandleClasses(CONFIG.CYCLE.includes(b.type))} draggable="true" ondragstart={(e:DragEvent)=>{e.dataTransfer?.setData("text/plain",b.id);blockDraggingId=b.id;}} ondragend={()=>blockDraggingId=null}>{CONFIG.CYCLE.includes(b.type)?CONFIG.BULLETS[b.type]:"::"}</div>
-                  <textarea use:autoFocus={{id:b.id,focusId:activeFocusId,offset:activeCursorOffset}} class="{Utils.getBlockClasses(b.type)} resize-none overflow-hidden bg-transparent" rows="1" spellcheck="false" bind:value={b.text} use:autoResize onkeydown={(e:KeyboardEvent)=>{const target=e.target as HTMLTextAreaElement;if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();EditorEngine.split(b.id,target.selectionStart);}if(e.key==="Backspace"&&!target.selectionStart){e.preventDefault();EditorEngine.merge(b.id);}if(e.key==="Tab"){e.preventDefault();EditorEngine.indent(b.id,e.shiftKey?-1:1);}if(e.key==="ArrowUp"){e.preventDefault();EditorEngine.nav(b.id,-1);}if(e.key==="ArrowDown"){e.preventDefault();EditorEngine.nav(b.id,1);}}} oninput={(e:Event)=>EditorEngine.updateText(b.id,(e.target as HTMLTextAreaElement).value)} onfocus={()=>focusedRegionId=r.id} onblur={()=>{if(focusedRegionId===r.id)focusedRegionId=null;}}></textarea>
+                  <textarea use:autoFocus={{id:b.id,focusId:activeFocusId,offset:activeCursorOffset}} class="{Utils.getBlockClasses(b.type)} resize-none overflow-hidden bg-transparent" rows="1" spellcheck="false" bind:value={b.text} use:autoResize onkeydown={(e:KeyboardEvent)=>{const target=e.target as HTMLTextAreaElement;if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();EditorEngine.split(b.id,target.selectionStart);}if(e.key==="Backspace" && target.selectionStart === target.selectionEnd && target.selectionStart === 0){e.preventDefault();EditorEngine.merge(b.id);}if(e.key==="Tab"){e.preventDefault();EditorEngine.indent(b.id,e.shiftKey?-1:1);}if(e.key==="ArrowUp"){e.preventDefault();EditorEngine.nav(b.id,-1);}if(e.key==="ArrowDown"){e.preventDefault();EditorEngine.nav(b.id,1);}}} oninput={(e:Event)=>EditorEngine.updateText(b.id,(e.target as HTMLTextAreaElement).value)} onfocus={()=>focusedRegionId=r.id} onblur={()=>{if(focusedRegionId===r.id)focusedRegionId=null;}}></textarea>
                 </div>
               {/each}{/if}
             </div>
