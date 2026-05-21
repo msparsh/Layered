@@ -139,11 +139,12 @@
 </script>
 
 <svelte:window onclick={()=>contextMenuVisible=false} onkeydown={globalKey} onpointerup={()=>draggingStickerId=null}/>
+
 <button class="fixed top-6 right-6 w-12 h-12 bg-zinc-900 text-white rounded-full shadow-[0_8px_30px_rgba(0,0,0,0.15)] text-2xl z-[60] hover:scale-110 active:scale-95 hover:bg-zinc-800 transition-all duration-300 flex items-center justify-center border border-zinc-800" onclick={()=>stickerDrawerOpen=!stickerDrawerOpen}>🎒</button>
 
-<div class="fixed top-0 right-0 w-[340px] h-screen bg-white/90 backdrop-blur-lg shadow-[-10px_0_40px_rgba(0,0,0,0.04)] z-[50] transform transition-transform duration-500 ease-out border-l border-zinc-200/60 p-6 overflow-y-auto {stickerDrawerOpen?'translate-x-0':'translate-x-full'}">
+<div class="fixed top-0 right-0 w-[340px] h-screen bg-white/90 backdrop-blur-lg shadow-[-10px_0_40px_rgba(0,0,0,0.04)] z-[50] transform transition-transform duration-500 ease-out border-l border-zinc-200/60 p-6 overflow-y-auto {stickerDrawerOpen?'translate-x-0':'translate-x-full'} flex flex-col">
   <div class="flex items-center justify-between mb-2 mt-16"><h2 class="text-2xl font-extrabold text-zinc-800 tracking-tight">Stickers 🌟</h2><span class="text-xs font-semibold px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-full border border-zinc-200/60 shadow-sm">{loadedStickers.length}</span></div>
-  <p class="text-xs text-zinc-500 mb-5 leading-relaxed">Double-click any floating image on your page to save it here! Or upload new ones directly 👇 💡 <b>Drag stickers onto tabs</b> to organize them, or right-click for options.</p>
+  <p class="text-xs text-zinc-500 mb-5 leading-relaxed">Double-click any floating image on your page to save it here! Or upload new ones directly 👇 💡 <b>Drag stickers onto tabs</b> to organize them.</p>
 
   <div class="flex flex-wrap gap-1.5 items-center mb-6 pb-2 border-b border-zinc-100">
     <button class={packBtnClass('all')} onclick={()=>{activePackId='all';store.meta.activePackId='all';store.requestSave();}} onpointerenter={e=>tDrop(e,1)} onpointerleave={e=>tDrop(e,0)} onpointerup={e=>{tDrop(e,0);draggingStickerId=null;}}>All</button>
@@ -153,16 +154,44 @@
     <button class="w-7 h-7 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-700 flex items-center justify-center text-sm font-bold border border-zinc-200/60 active:scale-95 transition-all duration-200" onclick={()=>showCustomPrompt("Create New Sticker Pack 📁","",n=>StickerBookManager.createPack(n))} title="Create New Sticker Pack">＋</button>
   </div>
 
-  <label class="block w-full cursor-pointer bg-zinc-900 text-white hover:bg-zinc-800 text-center py-3 rounded-xl font-medium text-sm mb-6 transition-all duration-300 hover:shadow-md active:scale-[0.98] border border-transparent">➕ Upload Sticker<input type="file" accept="image/*" class="hidden" onchange={e=>{const f=e.target.files[0];if(f){const r=new FileReader();r.onload=ev=>StickerBookManager.saveSticker(ev.target.result);r.readAsDataURL(f);}}}/></label>
+  <label class="block w-full cursor-pointer bg-zinc-900 text-white hover:bg-zinc-800 text-center py-3 rounded-xl font-medium text-sm mb-4 transition-all duration-300 hover:shadow-md active:scale-[0.98] border border-transparent">➕ Upload Sticker<input type="file" accept="image/*" class="hidden" onchange={e=>{const f=e.target.files[0];if(f){const r=new FileReader();r.onload=ev=>StickerBookManager.saveSticker(ev.target.result);r.readAsDataURL(f);}}}/></label>
 
-  <div class="grid grid-cols-2 gap-4">
-    {#if !loadedStickers.length} <div class="col-span-2 text-center text-sm text-zinc-400 mt-4">No stickers saved yet! 😿</div> {/if}
-    {#each loadedStickers as s (s.id)}
-      <div class="relative cursor-grab active:cursor-grabbing group flex items-center justify-center p-3 bg-white/60 hover:bg-white rounded-2xl shadow-sm border border-zinc-200/50 transition-all duration-300 {draggingStickerId===s.id?'opacity-40 scale-95':'hover:-translate-y-0.5'}" onpointerdown={e=>{e.preventDefault();draggingStickerId=s.id;}} onclick={()=>store.spawnImage(s.src)} oncontextmenu={e=>openCtx(e,[{label:"Manage Packs... 📂",action:()=>{packSelectorStickerId=s.id;packSelectorVisible=true;}},...(activePackId!=="all"?[{label:`Remove from Pack ❌`,action:()=>StickerBookManager.toggleStickerInPack(s.id,activePackId)}]:[]),{label:"Delete Globally 🗑️",danger:true,action:()=>{if(confirm("Delete permanently?"))StickerBookManager.removeSticker(s.id);}}])}>
-        <img src={s.src} draggable="false" class="max-w-full max-h-24 object-contain filter drop-shadow-sm group-hover:drop-shadow-md" alt="sticker"/>
-        <button class="absolute top-1.5 right-1.5 w-5 h-5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-500 rounded-full flex items-center justify-center text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-200" onclick={e=>{e.stopPropagation();activePackId==="all"?(confirm("Delete globally?")&&StickerBookManager.removeSticker(s.id)):StickerBookManager.toggleStickerInPack(s.id,activePackId);}}>✕</button>
+  {#if promptVisible}
+    <div class="relative bg-zinc-100 border border-zinc-200 rounded-xl p-4 mb-4 shadow-sm animate-[slideIn_0.2s_ease-out_forwards]">
+      <h3 class="text-sm font-bold text-zinc-800 mb-2">{promptTitle}</h3>
+      <input id="custom-prompt-input" type="text" bind:value={promptValue} class="w-full bg-white border border-zinc-200 text-zinc-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-800/10 focus:border-zinc-800 mb-3" placeholder="Enter text..." onkeydown={e=>{if(e.key==="Enter"){e.preventDefault();promptCallback?.(promptValue);promptVisible=false;}else if(e.key==="Escape"){e.preventDefault();promptVisible=false;}}}/>
+      <div class="flex gap-2 justify-end">
+        <button class="px-3 py-1.5 bg-zinc-200 hover:bg-zinc-300 text-zinc-700 rounded-lg text-xs font-bold" onclick={()=>promptVisible=false}>Cancel</button>
+        <button class="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg text-xs font-bold" onclick={()=>{promptCallback?.(promptValue);promptVisible=false;}}>Save</button>
       </div>
-    {/each}
+    </div>
+  {/if}
+
+  {#if packSelectorVisible}
+    <div class="relative bg-zinc-100 border border-zinc-200 rounded-xl p-4 mb-4 shadow-sm animate-[slideIn_0.2s_ease-out_forwards]">
+      <div class="flex items-center justify-between mb-3"><h3 class="text-sm font-bold text-zinc-800">Manage Packs 📁</h3><button class="text-zinc-400 hover:text-zinc-800 font-bold" onclick={()=>packSelectorVisible=false}>✕</button></div>
+      <div class="space-y-1.5 max-h-[180px] overflow-y-auto pr-1">
+        {#if !store.meta.stickerPacks?.length} <div class="text-xs text-zinc-500 text-center py-2">No custom packs created!</div>
+        {:else} {#each store.meta.stickerPacks as pack (pack.id)}
+          {@const isM=pack.stickers?.includes(packSelectorStickerId)}
+          <button class="w-full flex items-center justify-between p-2.5 rounded-lg border text-xs font-semibold transition-colors {isM?'bg-zinc-900 text-white border-zinc-900':'bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-50'}" onclick={()=>StickerBookManager.toggleStickerInPack(packSelectorStickerId,pack.id)}>
+            <span>{pack.name}</span> <span>{isM?"✓ Added":"＋ Add"}</span>
+          </button>
+        {/each} {/if}
+      </div>
+    </div>
+  {/if}
+
+  <div class="flex-1 overflow-y-auto pr-1">
+    <div class="grid grid-cols-2 gap-4 pb-12">
+      {#if !loadedStickers.length} <div class="col-span-2 text-center text-sm text-zinc-400 mt-4">No stickers saved yet! 😿</div> {/if}
+      {#each loadedStickers as s (s.id)}
+        <div class="relative cursor-grab active:cursor-grabbing group flex items-center justify-center p-3 bg-white/60 hover:bg-white rounded-2xl shadow-sm border border-zinc-200/50 transition-all duration-300 {draggingStickerId===s.id?'opacity-40 scale-95':'hover:-translate-y-0.5'}" onpointerdown={e=>{e.preventDefault();draggingStickerId=s.id;}} onclick={()=>store.spawnImage(s.src)} oncontextmenu={e=>openCtx(e,[{label:"Manage Packs... 📂",action:()=>{packSelectorStickerId=s.id;packSelectorVisible=true;}},...(activePackId!=="all"?[{label:`Remove from Pack ❌`,action:()=>StickerBookManager.toggleStickerInPack(s.id,activePackId)}]:[]),{label:"Delete Globally 🗑️",danger:true,action:()=>StickerBookManager.removeSticker(s.id)}])}>
+          <img src={s.src} draggable="false" class="max-w-full max-h-24 object-contain filter drop-shadow-sm group-hover:drop-shadow-md" alt="sticker"/>
+          <button class="absolute top-1.5 right-1.5 w-5 h-5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-500 rounded-full flex items-center justify-center text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity duration-200" onclick={e=>{e.stopPropagation();activePackId==="all"?StickerBookManager.removeSticker(s.id):StickerBookManager.toggleStickerInPack(s.id,activePackId);}}>✕</button>
+        </div>
+      {/each}
+    </div>
   </div>
 </div>
 
@@ -171,7 +200,7 @@
     <div class="page-wrapper w-[100vw] min-h-screen flex-shrink-0 relative flex justify-center overflow-hidden" data-page-id={pId} use:pointerAction={{ignore:e=>["TEXTAREA","BUTTON"].includes(e.target.tagName)||e.target.classList.contains("bullet-text")||e.target.closest(".region-box")||e.target.closest(".draggable-image")||e.target.closest("#page-indicator"),onDown:e=>RegionManager.start(e),onMove:e=>RegionManager.draw(e),onUp:()=>RegionManager.stop()}} onpointerup={e=>{if(draggingStickerId){const s=loadedStickers.find(st=>st.id===draggingStickerId);if(s){const r=e.currentTarget.getBoundingClientRect();store.spawnImage(s.src,e.clientX-r.left,e.clientY-r.top);}draggingStickerId=null;}}} ondragover={e=>e.preventDefault()} ondrop={e=>{e.preventDefault();try{const d=JSON.parse(e.dataTransfer.getData("application/json"));if(d?.type==="sticker"){const r=e.currentTarget.getBoundingClientRect();store.spawnImage(d.src,e.clientX-r.left,e.clientY-r.top);}}catch(err){}}}>
       <div class="absolute bottom-8 left-0 w-full text-center text-zinc-400 text-sm font-mono tracking-widest select-none pointer-events-none">{i+1}</div>
       {#each store.meta.regions.filter(r=>r.surfaceId===pId) as r (r.id)}
-        <div class="region-box absolute bg-zinc-50/80 hover:bg-zinc-100/80 border transition-colors duration-300 rounded-lg flex flex-col layer-paper {focusedRegionId===r.id?'bg-white border-zinc-800 shadow-md ring-1 ring-zinc-800/10':'border-zinc-300 hover:border-zinc-400 shadow-sm'}" data-locked={r.locked} style="left:{r.x}px;top:{r.y}px;width:{r.width}px;height:{r.height}px" oncontextmenu={e=>openCtx(e,[{label:r.locked?"Unlock Position 🔓":"Lock Position 🔒",action:()=>{r.locked=!r.locked;store.requestSave();}},{label:"Clear Content 🧹",action:()=>{if(confirm("Clear content?")){store.pages[r.pageId]=[store.createBlock()];store.rebuildIndex();store.dirtyPages.add(r.pageId);store.requestSave();}}},{label:"Delete Region 🗑️",danger:true,action:()=>{if(confirm("Delete region?"))store.removeRegion(r.id);}}])}>
+        <div class="region-box absolute bg-zinc-50/80 hover:bg-zinc-100/80 border transition-colors duration-300 rounded-lg flex flex-col layer-paper {focusedRegionId===r.id?'bg-white border-zinc-800 shadow-md ring-1 ring-zinc-800/10':'border-zinc-300 hover:border-zinc-400 shadow-sm'}" data-locked={r.locked} style="left:{r.x}px;top:{r.y}px;width:{r.width}px;height:{r.height}px" oncontextmenu={e=>openCtx(e,[{label:r.locked?"Unlock Position 🔓":"Lock Position 🔒",action:()=>{r.locked=!r.locked;store.requestSave();}},{label:"Clear Content 🧹",action:()=>{store.pages[r.pageId]=[store.createBlock()];store.rebuildIndex();store.dirtyPages.add(r.pageId);store.requestSave();}},{label:"Delete Region 🗑️",danger:true,action:()=>store.removeRegion(r.id)}])}>
           <div use:dragBehavior={{getObj:()=>store.meta.regions.find(x=>x.id===r.id),keys:['x','y']}} class="h-5 bg-transparent {r.locked?'cursor-default':'cursor-grab active:cursor-grabbing'} rounded-t-lg flex items-center px-2 hover:bg-black/5 transition-colors group"></div>
           <div class="flex-1 overflow-y-auto py-4 pr-4 pl-10 cursor-text" style="touch-action: pan-y;">
             <div class="min-h-full" ondragover={e=>e.preventDefault()} ondragend={()=>blockDraggingId=null} ondrop={e=>{e.preventDefault();const dId=e.dataTransfer.getData("text/plain"),tB=e.target.closest(".bullet-block");if(dId&&tB){const r=tB.getBoundingClientRect();store.moveBlockDOM(dId,tB.dataset.id,e.clientY>r.top+r.height/2);}blockDraggingId=null;}}>
@@ -202,39 +231,7 @@
 
 {#if contextMenuVisible}
   <div class="fixed bg-white border border-zinc-200 shadow-xl rounded-md py-1 z-[100] w-48" style="left:{contextMenuX}px;top:{contextMenuY}px">
-    {#each contextMenuItems as item} <button class="w-full text-left px-3 py-1.5 hover:bg-zinc-100 text-sm {item.danger?'text-red-600':'text-zinc-800'}" onclick={e=>{e.stopPropagation();item.action();contextMenuVisible=false;}}>{item.label}</button> {/each}
-  </div>
-{/if}
-
-{#if promptVisible}
-  <div class="fixed inset-0 bg-black/40 backdrop-blur-sm z-[200] flex items-center justify-center transition-all duration-300">
-    <div class="bg-white rounded-2xl shadow-2xl border border-zinc-200 p-6 w-[360px] animate-[slideIn_0.2s_ease-out_forwards]">
-      <h3 class="text-lg font-bold text-zinc-800 mb-3">{promptTitle}</h3>
-      <input id="custom-prompt-input" type="text" bind:value={promptValue} class="w-full bg-zinc-50 border border-zinc-200 text-zinc-800 rounded-xl px-3 py-2.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-zinc-800/10 focus:border-zinc-800 transition-all duration-300 mb-4" placeholder="Enter pack name..." onkeydown={e=>{if(e.key==="Enter"){e.preventDefault();promptCallback?.(promptValue);promptVisible=false;}else if(e.key==="Escape"){e.preventDefault();promptVisible=false;}}}/>
-      <div class="flex gap-2 justify-end">
-        <button class="px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-xl text-xs font-semibold active:scale-95 transition-all duration-200" onclick={()=>promptVisible=false}>Cancel</button>
-        <button class="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-xs font-semibold active:scale-95 transition-all duration-200" onclick={()=>{promptCallback?.(promptValue);promptVisible=false;}}>Save</button>
-      </div>
-    </div>
-  </div>
-{/if}
-
-{#if packSelectorVisible}
-  <div class="fixed inset-0 bg-black/40 backdrop-blur-sm z-[200] flex items-center justify-center transition-all duration-300">
-    <div class="bg-white rounded-2xl shadow-2xl border border-zinc-200 p-6 w-[360px] animate-[slideIn_0.2s_ease-out_forwards]">
-      <div class="flex items-center justify-between mb-4"><h3 class="text-lg font-bold text-zinc-800">Manage Sticker Packs 📂</h3><button class="w-6 h-6 flex items-center justify-center rounded-full hover:bg-zinc-100 text-zinc-400 transition-colors" onclick={()=>packSelectorVisible=false}>✕</button></div>
-      <p class="text-xs text-zinc-500 mb-4">Select which custom packs should include this sticker:</p>
-      <div class="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
-        {#if !store.meta.stickerPacks?.length} <div class="text-center py-6 text-sm text-zinc-400 border border-dashed border-zinc-200 rounded-xl">No custom packs created yet! 📁</div>
-        {:else} {#each store.meta.stickerPacks as pack (pack.id)}
-          {@const isM=pack.stickers?.includes(packSelectorStickerId)}
-          <button class="w-full flex items-center justify-between p-3 rounded-xl border text-sm font-semibold transition-all duration-200 active:scale-[0.98] {isM?'bg-zinc-900 text-white border-zinc-900 shadow-sm':'bg-zinc-50 hover:bg-zinc-100 text-zinc-700 border-zinc-200/50'}" onclick={()=>StickerBookManager.toggleStickerInPack(packSelectorStickerId,pack.id)}>
-            <span>{pack.name}</span> <span class={isM?"text-xs font-bold bg-white/20 px-2 py-0.5 rounded-full":"text-xs text-zinc-400"}>{isM?"✓ Added":"＋ Add"}</span>
-          </button>
-        {/each} {/if}
-      </div>
-      <div class="mt-6 flex justify-end"><button class="px-5 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-xs font-semibold active:scale-95 transition-all duration-200 shadow-sm" onclick={()=>packSelectorVisible=false}>Done</button></div>
-    </div>
+    {#each contextMenuItems as item} <button class="w-full text-left px-3 py-1.5 hover:bg-zinc-100 text-sm {item.danger?'text-red-600 font-medium':'text-zinc-800'}" onclick={e=>{e.stopPropagation();item.action();contextMenuVisible=false;}}>{item.label}</button> {/each}
   </div>
 {/if}
 
