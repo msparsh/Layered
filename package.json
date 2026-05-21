@@ -7,7 +7,7 @@
         "dev": "vite",
         "build:vite": "vite build",
         "start": "npm run build:vite && electron .",
-        "build": "npm run build:vite && electron-builder" 
+        "build": "npm run build:vite && electron-builder"
     },
     "author": "",
     "license": "MIT",
@@ -16,13 +16,16 @@
         "electron": "^41.2.0",
         "electron-builder": "^26.8.1",
         "svelte": "^5.55.7",
+        "svelte-check": "^4.4.8",
+        "tslib": "^2.8.1",
+        "typescript": "^6.0.3",
         "vite": "^8.0.13"
     },
     "build": {
         "appId": "com.notebook.app",
         "productName": "Notebook",
         "directories": {
-            "output": "release" 
+            "output": "release"
         },
         "files": [
             "dist/**/*",
